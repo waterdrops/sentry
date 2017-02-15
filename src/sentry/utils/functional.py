@@ -15,3 +15,13 @@ def extract_lazy_object(lo):
     if lo._wrapped is empty:
         lo._setup()
     return lo._wrapped
+
+
+def apply_values(function, mapping):
+    keys, values = zip(*mapping.items())
+    return dict(
+        zip(
+            keys,
+            function(values),
+        ),
+    )
