@@ -18,6 +18,9 @@ def extract_lazy_object(lo):
 
 
 def apply_values(function, mapping):
+    if not mapping:
+        return {}
+
     keys, values = zip(*mapping.items())
     return dict(
         zip(
