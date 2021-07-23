@@ -1,7 +1,7 @@
-import React from 'react';
-import {Mention, MentionsInput} from 'react-mentions';
+import * as React from 'react';
+import {Mention, MentionsInput, MentionsInputProps} from 'react-mentions';
+import {withTheme} from '@emotion/react';
 import styled from '@emotion/styled';
-import {withTheme} from 'emotion-theming';
 
 import Button from 'app/components/button';
 import NavTabs from 'app/components/navTabs';
@@ -122,7 +122,7 @@ class NoteInputComponent extends React.Component<Props, State> {
     this.submitForm();
   };
 
-  handleChange = (e: MentionChangeEvent) => {
+  handleChange: MentionsInputProps['onChange'] = e => {
     this.setState({value: e.target.value});
 
     if (this.props.onChange) {
@@ -130,7 +130,7 @@ class NoteInputComponent extends React.Component<Props, State> {
     }
   };
 
-  handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement | HTMLInputElement>) => {
+  handleKeyDown: MentionsInputProps['onKeyDown'] = e => {
     // Auto submit the form on [meta] + Enter
     if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
       this.submitForm();
@@ -156,16 +156,8 @@ class NoteInputComponent extends React.Component<Props, State> {
 
   render() {
     const {preview, value} = this.state;
-    const {
-      modelId,
-      busy,
-      placeholder,
-      minHeight,
-      errorJSON,
-      memberList,
-      teams,
-      theme,
-    } = this.props;
+    const {modelId, busy, placeholder, minHeight, errorJSON, memberList, teams, theme} =
+      this.props;
 
     const existingItem = !!modelId;
     const btnText = existingItem ? t('Save Comment') : t('Post Comment');

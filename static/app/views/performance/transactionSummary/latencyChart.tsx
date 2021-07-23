@@ -1,4 +1,4 @@
-import React from 'react';
+import {Component, Fragment} from 'react';
 import {Location} from 'history';
 
 import BarChart from 'app/components/charts/barChart';
@@ -20,7 +20,7 @@ import {computeBuckets, formatHistogramData} from 'app/utils/performance/histogr
 import {decodeInteger} from 'app/utils/queryString';
 import theme from 'app/utils/theme';
 
-import {filterToColour, filterToField, SpanOperationBreakdownFilter} from './filter';
+import {filterToColor, filterToField, SpanOperationBreakdownFilter} from './filter';
 
 export const ZOOM_START = 'startDuration';
 export const ZOOM_END = 'endDuration';
@@ -55,8 +55,8 @@ type State = {
  * This graph visualizes how many transactions were recorded
  * at each duration bucket, showing the modality of the transaction.
  */
-class LatencyChart extends React.Component<Props, State> {
-  state = {
+class LatencyChart extends Component<Props, State> {
+  state: State = {
     zoomError: false,
   };
 
@@ -117,7 +117,7 @@ class LatencyChart extends React.Component<Props, State> {
     const colors =
       currentFilter === SpanOperationBreakdownFilter.None
         ? [...theme.charts.getColorPalette(1)]
-        : [filterToColour(currentFilter)];
+        : [filterToColor(currentFilter)];
 
     // Use a custom tooltip formatter as we need to replace
     // the tooltip content entirely when zooming is no longer available.
@@ -209,19 +209,7 @@ class LatencyChart extends React.Component<Props, State> {
       location
     );
 
-    let min: number | undefined = undefined;
-    let max: number | undefined = undefined;
-
-    if (ZOOM_START in location.query) {
-      min = decodeInteger(location.query[ZOOM_START], 0);
-    }
-
-    if (ZOOM_END in location.query) {
-      const decodedMax = decodeInteger(location.query[ZOOM_END]);
-      if (typeof decodedMax === 'number') {
-        max = decodedMax;
-      }
-    }
+    const {min, max} = decodeHistogramZoom(location);
 
     const field = filterToField(currentFilter) ?? 'transaction.duration';
 
@@ -233,7 +221,7 @@ class LatencyChart extends React.Component<Props, State> {
           });
 
     return (
-      <React.Fragment>
+      <Fragment>
         <HeaderTitleLegend>
           {headerTitle}
           <QuestionTooltip
@@ -269,7 +257,7 @@ class LatencyChart extends React.Component<Props, State> {
             </HistogramQuery>
           )}
         </Histogram>
-      </React.Fragment>
+      </Fragment>
     );
   }
 }
@@ -281,18 +269,36 @@ export function LatencyChartControls(props: {location: Location}) {
     <Histogram location={location} zoomKeys={[ZOOM_START, ZOOM_END]}>
       {({filterOptions, handleFilterChange, activeFilter}) => {
         return (
-          <React.Fragment>
+          <Fragment>
             <OptionSelector
               title={t('Outliers')}
               selected={activeFilter.value}
               options={filterOptions}
               onChange={handleFilterChange}
             />
-          </React.Fragment>
+          </Fragment>
         );
       }}
     </Histogram>
   );
+}
+
+export function decodeHistogramZoom(location: Location) {
+  let min: number | undefined = undefined;
+  let max: number | undefined = undefined;
+
+  if (ZOOM_START in location.query) {
+    min = decodeInteger(location.query[ZOOM_START], 0);
+  }
+
+  if (ZOOM_END in location.query) {
+    const decodedMax = decodeInteger(location.query[ZOOM_END]);
+    if (typeof decodedMax === 'number') {
+      max = decodedMax;
+    }
+  }
+
+  return {min, max};
 }
 
 export default LatencyChart;

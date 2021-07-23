@@ -1,6 +1,6 @@
-import React from 'react';
+import {Fragment} from 'react';
+import {withTheme} from '@emotion/react';
 import styled from '@emotion/styled';
-import {withTheme} from 'emotion-theming';
 import {Location} from 'history';
 
 import BarChart from 'app/components/charts/barChart';
@@ -22,6 +22,7 @@ import {computeBuckets, formatHistogramData} from 'app/utils/performance/histogr
 import {Theme} from 'app/utils/theme';
 
 import {DoubleHeaderContainer} from '../../styles';
+import {getFieldOrBackup} from '../display/utils';
 
 const NUM_BUCKETS = 50;
 const PRECISION = 0;
@@ -35,6 +36,9 @@ type Props = {
   title: string;
   titleTooltip: string;
   onFilterChange: (minValue: number, maxValue: number) => void;
+  didReceiveMultiAxis?: (axisCounts: Record<string, number>) => void;
+  backupField?: string;
+  usingBackupAxis: boolean;
 };
 
 export function HistogramChart(props: Props) {
@@ -47,7 +51,12 @@ export function HistogramChart(props: Props) {
     field,
     title,
     titleTooltip,
+    didReceiveMultiAxis,
+    backupField,
+    usingBackupAxis,
   } = props;
+
+  const _backupField = backupField ? [backupField] : [];
 
   const xAxis = {
     type: 'category' as const,
@@ -72,13 +81,15 @@ export function HistogramChart(props: Props) {
         eventView={eventView}
         numBuckets={NUM_BUCKETS}
         precision={PRECISION}
-        fields={[field]}
+        fields={[field, ..._backupField]}
         dataFilter="exclude_outliers"
+        didReceiveMultiAxis={didReceiveMultiAxis}
       >
         {results => {
+          const _field = usingBackupAxis ? getFieldOrBackup(field, backupField) : field;
           const loading = results.isLoading;
           const errored = results.error !== null;
-          const chartData = results.histograms?.[field];
+          const chartData = results.histograms?.[_field];
 
           if (errored) {
             return (
@@ -102,24 +113,20 @@ export function HistogramChart(props: Props) {
             allSeries.push(series);
           }
 
-          const values = series.data.map(point => point.value);
-          const max = values.length ? Math.max(...values) : undefined;
-
           const yAxis = {
             type: 'value' as const,
-            max,
             axisLabel: {
               color: theme.chartLabel,
             },
           };
 
           return (
-            <React.Fragment>
+            <Fragment>
               <BarChartZoom
                 minZoomWidth={10 ** -PRECISION * NUM_BUCKETS}
                 location={location}
-                paramStart={`${field}:>=`}
-                paramEnd={`${field}:<=`}
+                paramStart={`${_field}:>=`}
+                paramEnd={`${_field}:<=`}
                 xAxisIndex={[0]}
                 buckets={computeBuckets(chartData)}
                 onHistoryPush={onFilterChange}
@@ -153,7 +160,7 @@ export function HistogramChart(props: Props) {
                   );
                 }}
               </BarChartZoom>
-            </React.Fragment>
+            </Fragment>
           );
         }}
       </HistogramQuery>

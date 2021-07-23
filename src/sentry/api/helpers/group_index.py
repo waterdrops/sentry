@@ -12,12 +12,13 @@ from rest_framework.response import Response
 from sentry import eventstream, features, search
 from sentry.api.base import audit_logger
 from sentry.api.fields import ActorField
-from sentry.api.issue_search import InvalidSearchQuery, convert_query_values, parse_search_query
+from sentry.api.issue_search import convert_query_values, parse_search_query
 from sentry.api.serializers import serialize
 from sentry.api.serializers.models.actor import ActorSerializer
 from sentry.app import ratelimiter
 from sentry.constants import DEFAULT_SORT_OPTION
 from sentry.db.models.query import create_or_update
+from sentry.exceptions import InvalidSearchQuery
 from sentry.models import (
     TOMBSTONE_FIELDS_FROM_GROUP,
     Activity,
@@ -30,6 +31,7 @@ from sentry.models import (
     GroupHash,
     GroupInboxReason,
     GroupLink,
+    GroupRelease,
     GroupResolution,
     GroupSeen,
     GroupShare,
@@ -42,6 +44,7 @@ from sentry.models import (
     Team,
     User,
     UserOption,
+    follows_semver_versioning_scheme,
     remove_group_from_inbox,
 )
 from sentry.models.group import STATUS_UPDATE_CHOICES, looks_like_short_id
@@ -492,7 +495,43 @@ def rate_limit_endpoint(limit=1, window=1):
     return inner
 
 
-def update_groups(request, group_ids, projects, organization_id, search_fn, has_inbox=False):
+def get_current_release_version_of_group(group, follows_semver=False):
+    """
+    Function that returns the latest release version associated with a Group, and by latest we
+    mean either most recent (date) or latest in semver versioning scheme
+    Inputs:
+        * group: Group of the issue
+        * follows_semver: flag that determines whether the project of the group follows semantic
+                          versioning or not.
+    Returns:
+        current_release_version
+    """
+    current_release_version = None
+    if follows_semver:
+        try:
+            # This sets current_release_version to the latest semver version associated with a group
+            order_by_semver_desc = [f"-{col}" for col in Release.SEMVER_COLS]
+            current_release_version = (
+                Release.objects.filter_to_semver()
+                .filter(
+                    id__in=GroupRelease.objects.filter(
+                        project_id=group.project.id, group_id=group.id
+                    ).values_list("release_id"),
+                )
+                .annotate_prerelease_column()
+                .order_by(*order_by_semver_desc)
+                .values_list("version", flat=True)[:1]
+                .get()
+            )
+        except Release.DoesNotExist:
+            ...
+    else:
+        # This sets current_release_version to the most recent release associated with a group
+        current_release_version = group.get_last_release()
+    return current_release_version
+
+
+def update_groups(request, group_ids, projects, organization_id, search_fn):
     if group_ids:
         group_list = Group.objects.filter(
             project__organization_id=organization_id, project__in=projects, id__in=group_ids
@@ -520,7 +559,7 @@ def update_groups(request, group_ids, projects, organization_id, search_fn, has_
     # so we won't have to requery for each group
     project_lookup = {p.id: p for p in projects}
 
-    acting_user = request.user if request.user.is_authenticated() else None
+    acting_user = request.user if request.user.is_authenticated else None
 
     if not group_ids:
         try:
@@ -655,8 +694,28 @@ def update_groups(request, group_ids, projects, organization_id, search_fn, has_
                         "release": release,
                         "type": res_type,
                         "status": res_status,
-                        "actor_id": request.user.id if request.user.is_authenticated() else None,
+                        "actor_id": request.user.id if request.user.is_authenticated else None,
                     }
+
+                    # We only set `current_release_version` if GroupResolution type is
+                    # in_next_release, because we need to store information about the latest/most
+                    # recent release that was associated with a group and that is required for
+                    # release comparisons (i.e. handling regressions)
+                    if res_type == GroupResolution.Type.in_next_release:
+                        # Check if semver versioning scheme is followed
+                        follows_semver = follows_semver_versioning_scheme(
+                            org_id=group.organization.id,
+                            project_id=group.project.id,
+                            release_version=release.version,
+                        )
+
+                        current_release_version = get_current_release_version_of_group(
+                            group=group, follows_semver=follows_semver
+                        )
+                        if current_release_version:
+                            resolution_params.update(
+                                {"current_release_version": current_release_version}
+                            )
                     resolution, created = GroupResolution.objects.get_or_create(
                         group=group, defaults=resolution_params
                     )
@@ -683,8 +742,7 @@ def update_groups(request, group_ids, projects, organization_id, search_fn, has_
                 remove_group_from_inbox(
                     group, action=GroupInboxRemoveAction.RESOLVED, user=acting_user
                 )
-                if has_inbox:
-                    result["inbox"] = None
+                result["inbox"] = None
 
                 assigned_to = self_subscribe_and_assign_issue(acting_user, group)
                 if assigned_to is not None:
@@ -732,8 +790,7 @@ def update_groups(request, group_ids, projects, organization_id, search_fn, has_
                     remove_group_from_inbox(
                         group, action=GroupInboxRemoveAction.IGNORED, user=acting_user
                     )
-                if has_inbox:
-                    result["inbox"] = None
+                result["inbox"] = None
 
                 ignore_duration = (
                     statusDetails.pop("ignoreDuration", None)
@@ -764,7 +821,7 @@ def update_groups(request, group_ids, projects, organization_id, search_fn, has_
                                 "user_window": ignore_user_window,
                                 "state": state,
                                 "actor_id": request.user.id
-                                if request.user.is_authenticated()
+                                if request.user.is_authenticated
                                 else None,
                             },
                         )

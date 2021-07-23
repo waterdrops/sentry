@@ -1,85 +1,43 @@
 import re
-from typing import Any, Mapping, MutableMapping, Optional, Set, Tuple
+from abc import ABC
+from typing import Any, Mapping, MutableMapping, Optional, Tuple
 from urllib.parse import urlparse, urlunparse
 
-from django.urls import reverse
 from django.utils.html import escape
 from django.utils.safestring import SafeString, mark_safe
 
-from sentry.models import Activity, GroupSubscription, User, UserAvatar, UserOption
-from sentry.notifications.notify import notify
-from sentry.notifications.types import GroupSubscriptionReason
+from sentry.models import Activity, User
+from sentry.notifications.base import BaseNotification
+from sentry.notifications.helpers import get_reason_context
+from sentry.notifications.utils import send_activity_notification
+from sentry.notifications.utils.avatar import avatar_as_html
+from sentry.notifications.utils.participants import get_participants_for_group
 from sentry.types.integrations import ExternalProviders
-from sentry.utils.assets import get_asset_url
-from sentry.utils.avatar import get_email_avatar
-from sentry.utils.http import absolute_uri
 
 
-class ActivityNotification:
+class ActivityNotification(BaseNotification, ABC):
+    fine_tuning_key = "workflow"
+    is_message_issue_unfurl = True
+
     def __init__(self, activity: Activity) -> None:
         self.activity = activity
-        self.project = activity.project
-        self.organization = self.project.organization
-        self.group = activity.group
+        super().__init__(activity.project, activity.group)
 
-    def should_email(self) -> bool:
-        return True
-
-    def get_providers_from_which_to_remove_user(
-        self,
-        user: User,
-        participants_by_provider: Mapping[ExternalProviders, Mapping[User, int]],
-    ) -> Set[ExternalProviders]:
-        """
-        Given a mapping of provider to mappings of users to why they should receive
-        notifications for an activity, return the set of providers where the user
-        has opted out of receiving notifications.
-        """
-
-        providers = {
-            provider
-            for provider, participants in participants_by_provider.items()
-            if user in participants
-        }
-        if (
-            providers
-            and UserOption.objects.get_value(user, key="self_notifications", default="0") == "0"
-        ):
-            return providers
-        return set()
-
-    def get_participants(self) -> Mapping[ExternalProviders, Mapping[User, int]]:
-        # TODO(dcramer): not used yet today except by Release's
-        if not self.group:
-            return {}
-
-        participants_by_provider = GroupSubscription.objects.get_participants(self.group)
-        user_option = self.activity.user
-        if user_option:
-            # Optionally remove the actor that created the activity from the recipients list.
-            providers = self.get_providers_from_which_to_remove_user(
-                user_option, participants_by_provider
-            )
-            for provider in providers:
-                del participants_by_provider[provider][user_option]
-
-        return participants_by_provider
-
-    def get_template(self) -> str:
-        return "sentry/emails/activity/generic.txt"
-
-    def get_html_template(self) -> str:
-        return "sentry/emails/activity/generic.html"
-
-    def get_project_link(self) -> str:
-        return str(absolute_uri(f"/{self.organization.slug}/{self.project.slug}/"))
+    def get_filename(self) -> str:
+        return "activity/generic"
 
     def get_group_link(self) -> str:
         referrer = re.sub("Notification$", "Email", self.__class__.__name__)
         return str(self.group.get_absolute_url(params={"referrer": referrer}))
 
+    def get_participants_with_group_subscription_reason(
+        self,
+    ) -> Mapping[ExternalProviders, Mapping[User, int]]:
+        """This is overridden by the activity subclasses."""
+        return get_participants_for_group(self.group, self.activity.user)
+
     def get_base_context(self) -> MutableMapping[str, Any]:
-        """ The most basic context shared by every notification type. """
+        """The most basic context shared by every notification type."""
         activity = self.activity
 
         context = {
@@ -100,6 +58,7 @@ class ActivityNotification:
         activity_link = urlunparse(parts)
 
         return {
+            "organization": self.group.project.organization,
             "group": self.group,
             "link": group_link,
             "activity_link": activity_link,
@@ -121,17 +80,9 @@ class ActivityNotification:
         }
 
     def get_user_context(
-        self, user: User, reason: Optional[int] = None
+        self, user: User, extra_context: Mapping[str, Any]
     ) -> MutableMapping[str, Any]:
-        """ Get user-specific context. Do not call get_context() here. """
-        return {
-            "reason": GroupSubscriptionReason.descriptions.get(
-                reason, "are subscribed to this issue"
-            )
-        }
-
-    def get_category(self) -> str:
-        raise NotImplementedError
+        return get_reason_context(extra_context)
 
     def get_subject(self) -> str:
         group = self.group
@@ -144,37 +95,9 @@ class ActivityNotification:
     def get_description(self) -> Tuple[str, Mapping[str, Any], Mapping[str, Any]]:
         raise NotImplementedError
 
-    def avatar_as_html(self) -> str:
-        user = self.activity.user
-        if not user:
-            return '<img class="avatar" src="{}" width="20px" height="20px" />'.format(
-                escape(self.get_sentry_avatar_url())
-            )
-        avatar_type = user.get_avatar_type()
-        if avatar_type == "upload":
-            return f'<img class="avatar" src="{escape(self._get_user_avatar_url(user))}" />'
-        elif avatar_type == "letter_avatar":
-            return get_email_avatar(user.get_display_name(), user.get_label(), 20, False)
-        else:
-            return get_email_avatar(user.get_display_name(), user.get_label(), 20, True)
-
-    @staticmethod
-    def get_sentry_avatar_url() -> str:
-        url = "/images/sentry-email-avatar.png"
-        return str(absolute_uri(get_asset_url("sentry", url)))
-
-    def _get_user_avatar_url(self, user: User, size: int = 20) -> str:
-        try:
-            avatar = UserAvatar.objects.get(user=user)
-        except UserAvatar.DoesNotExist:
-            return ""
-
-        url = reverse("sentry-user-avatar-url", args=[avatar.ident])
-        if size:
-            url = f"{url}?s={int(size)}"
-        return str(absolute_uri(url))
-
-    def description_as_text(self, description: str, params: Mapping[str, Any]) -> str:
+    def description_as_text(
+        self, description: str, params: Mapping[str, Any], url: Optional[bool] = False
+    ) -> str:
         user = self.activity.user
         if user:
             name = user.name or user.email
@@ -182,6 +105,9 @@ class ActivityNotification:
             name = "Sentry"
 
         issue_name = self.group.qualified_short_id or "an issue"
+        if url and self.group.qualified_short_id:
+            group_url = self.group.get_absolute_url(params={"referrer": "activity_notification"})
+            issue_name = f"<{group_url}|{self.group.qualified_short_id}>"
 
         context = {"author": name, "an issue": issue_name}
         context.update(params)
@@ -197,7 +123,7 @@ class ActivityNotification:
 
         fmt = '<span class="avatar-container">{}</span> <strong>{}</strong>'
 
-        author = mark_safe(fmt.format(self.avatar_as_html(), escape(name)))
+        author = mark_safe(fmt.format(avatar_as_html(user), escape(name)))
 
         issue_name = escape(self.group.qualified_short_id or "an issue")
         an_issue = f'<a href="{escape(self.get_group_link())}">{issue_name}</a>'
@@ -210,16 +136,18 @@ class ActivityNotification:
     def get_title(self) -> str:
         return self.get_activity_name()
 
+    def get_notification_title(self) -> str:
+        description, params, _ = self.get_description()
+        return self.description_as_text(description, params, True)
+
+    def get_reference(self) -> Any:
+        return self.activity
+
+    def get_reply_reference(self) -> Optional[Any]:
+        return self.group
+
+    def get_type(self) -> str:
+        return f"notify.activity.{self.activity.get_type_display()}"
+
     def send(self) -> None:
-        if not self.should_email():
-            return
-
-        participants_by_provider = self.get_participants()
-        if not participants_by_provider:
-            return
-
-        # Only calculate shared context once.
-        shared_context = self.get_context()
-
-        for provider, participants in participants_by_provider.items():
-            notify(provider, self, participants, shared_context)
+        return send_activity_notification(self)

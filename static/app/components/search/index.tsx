@@ -1,4 +1,4 @@
-import React from 'react';
+import * as React from 'react';
 import {withRouter, WithRouterProps} from 'react-router';
 import styled from '@emotion/styled';
 import debounce from 'lodash/debounce';
@@ -112,6 +112,7 @@ class Search extends React.Component<Props> {
     trackAnalyticsEvent({
       eventKey: `${this.props.entryPoint}.open`,
       eventName: `${this.props.entryPoint} Open`,
+      organization_id: null,
     });
   }
 
@@ -126,9 +127,10 @@ class Search extends React.Component<Props> {
       query: state && state.inputValue,
       result_type: item.resultType,
       source_type: item.sourceType,
+      organization_id: null,
     });
 
-    const {to, action} = item;
+    const {to, action, configUrl} = item;
 
     // `action` refers to a callback function while
     // `to` is a react-router route
@@ -158,7 +160,7 @@ class Search extends React.Component<Props> {
     const {params, router} = this.props;
     const nextPath = replaceRouterParams(to, params);
 
-    navigateTo(nextPath, router);
+    navigateTo(nextPath, router, configUrl);
   };
 
   saveQueryMetrics = debounce(query => {
@@ -169,6 +171,7 @@ class Search extends React.Component<Props> {
       eventKey: `${this.props.entryPoint}.query`,
       eventName: `${this.props.entryPoint} Query`,
       query,
+      organization_id: null,
     });
   }, 200);
 

@@ -1,4 +1,3 @@
-import React from 'react';
 import {browserHistory} from 'react-router';
 
 import {mountWithTheme} from 'sentry-test/enzyme';
@@ -142,7 +141,6 @@ describe('groupEventDetails', () => {
     expect(browserHistory.replace).not.toHaveBeenCalled();
     wrapper.setProps({environments: [{id: '1', name: 'prod', displayName: 'Prod'}]});
     await tick();
-
     expect(browserHistory.replace).toHaveBeenCalled();
   });
 

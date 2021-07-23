@@ -1,24 +1,25 @@
-import React from 'react';
+import * as React from 'react';
 import {Location} from 'history';
 
 import GuideAnchor from 'app/components/assistant/guideAnchor';
 import Count from 'app/components/count';
+import * as AnchorLinkManager from 'app/components/events/interfaces/spans/anchorLinkManager';
 import * as DividerHandlerManager from 'app/components/events/interfaces/spans/dividerHandlerManager';
 import * as ScrollbarManager from 'app/components/events/interfaces/spans/scrollbarManager';
-import ProjectBadge from 'app/components/idBadge/projectBadge';
-import Tooltip from 'app/components/tooltip';
-import {ROW_HEIGHT} from 'app/components/waterfallTree/constants';
-import {Row, RowCell, RowCellContainer} from 'app/components/waterfallTree/row';
-import {DurationPill, RowRectangle} from 'app/components/waterfallTree/rowBar';
+import {ROW_HEIGHT} from 'app/components/performance/waterfall/constants';
+import {Row, RowCell, RowCellContainer} from 'app/components/performance/waterfall/row';
+import {DurationPill, RowRectangle} from 'app/components/performance/waterfall/rowBar';
 import {
+  DividerContainer,
   DividerLine,
   DividerLineGhostContainer,
-} from 'app/components/waterfallTree/rowDivider';
+  ErrorBadge,
+} from 'app/components/performance/waterfall/rowDivider';
 import {
-  OperationName,
   RowTitle,
   RowTitleContainer,
-} from 'app/components/waterfallTree/rowTitle';
+  RowTitleContent,
+} from 'app/components/performance/waterfall/rowTitle';
 import {
   ConnectorBar,
   StyledIconChevron,
@@ -26,20 +27,21 @@ import {
   TreeConnector,
   TreeToggle,
   TreeToggleContainer,
-} from 'app/components/waterfallTree/treeConnector';
+} from 'app/components/performance/waterfall/treeConnector';
 import {
   getDurationDisplay,
   getHumanDuration,
   toPercent,
-} from 'app/components/waterfallTree/utils';
+} from 'app/components/performance/waterfall/utils';
+import Tooltip from 'app/components/tooltip';
 import {Organization} from 'app/types';
 import {TraceFullDetailed} from 'app/utils/performance/quickTrace/types';
+import {isTraceFullDetailed} from 'app/utils/performance/quickTrace/utils';
 import Projects from 'app/utils/projects';
 
-import {DividerContainer, ErrorBadge, TransactionBarTitleContent} from './styles';
+import {StyledProjectBadge} from './styles';
 import TransactionDetail from './transactionDetail';
 import {TraceInfo, TraceRoot, TreeDepth} from './types';
-import {isTraceFullDetailed} from './utils';
 
 const MARGIN_LEFT = 0;
 
@@ -56,7 +58,7 @@ type Props = {
   isVisible: boolean;
   hasGuideAnchor: boolean;
   toggleExpandedState: () => void;
-  barColour?: string;
+  barColor?: string;
 };
 
 type State = {
@@ -67,6 +69,8 @@ class TransactionBar extends React.Component<Props, State> {
   state: State = {
     showDetail: false,
   };
+
+  transactionRowDOMRef = React.createRef<HTMLDivElement>();
 
   toggleDisplayDetail = () => {
     const {transaction} = this.props;
@@ -147,7 +151,7 @@ class TransactionBar extends React.Component<Props, State> {
     );
   }
 
-  renderToggle() {
+  renderToggle(errored: boolean) {
     const {isExpanded, transaction, toggleExpandedState} = this.props;
     const {children, generation} = transaction;
     const left = this.getCurrentOffset();
@@ -168,6 +172,7 @@ class TransactionBar extends React.Component<Props, State> {
         <TreeToggle
           disabled={isRoot}
           isExpanded={isExpanded}
+          errored={errored}
           onClick={event => {
             event.stopPropagation();
 
@@ -195,6 +200,9 @@ class TransactionBar extends React.Component<Props, State> {
     const {generateContentSpanBarRef} = scrollbarManagerChildrenProps;
     const {organization, transaction} = this.props;
     const left = this.getCurrentOffset();
+    const errored = isTraceFullDetailed(transaction)
+      ? transaction.errors.length > 0
+      : false;
 
     const content = isTraceFullDetailed(transaction) ? (
       <React.Fragment>
@@ -203,7 +211,7 @@ class TransactionBar extends React.Component<Props, State> {
             const project = projects.find(p => p.slug === transaction.project_slug);
             return (
               <Tooltip title={transaction.project_slug}>
-                <ProjectBadge
+                <StyledProjectBadge
                   project={project ? project : {slug: transaction.project_slug}}
                   avatarSize={16}
                   hideName
@@ -212,29 +220,24 @@ class TransactionBar extends React.Component<Props, State> {
             );
           }}
         </Projects>
-        <TransactionBarTitleContent>
+        <RowTitleContent errored={errored}>
           <strong>
-            <OperationName spanErrors={transaction.errors}>
-              {transaction['transaction.op']}
-            </OperationName>
+            {transaction['transaction.op']}
             {' \u2014 '}
           </strong>
           {transaction.transaction}
-        </TransactionBarTitleContent>
+        </RowTitleContent>
       </React.Fragment>
     ) : (
-      <TransactionBarTitleContent>
-        <strong>
-          <OperationName spanErrors={[]}>Trace</OperationName>
-          {' \u2014 '}
-        </strong>
+      <RowTitleContent errored={false}>
+        <strong>{'Trace \u2014 '}</strong>
         {transaction.traceSlug}
-      </TransactionBarTitleContent>
+      </RowTitleContent>
     );
 
     return (
       <RowTitleContainer ref={generateContentSpanBarRef()}>
-        {this.renderToggle()}
+        {this.renderToggle(errored)}
         <RowTitle
           style={{
             left: `${left}px`,
@@ -320,17 +323,16 @@ class TransactionBar extends React.Component<Props, State> {
 
   renderErrorBadge() {
     const {transaction} = this.props;
-    const {showDetail} = this.state;
 
     if (!isTraceFullDetailed(transaction) || !transaction.errors.length) {
       return null;
     }
 
-    return <ErrorBadge showDetail={showDetail} />;
+    return <ErrorBadge />;
   }
 
   renderRectangle() {
-    const {transaction, traceInfo, barColour} = this.props;
+    const {transaction, traceInfo, barColor} = this.props;
     const {showDetail} = this.state;
 
     // Use 1 as the difference in the event that startTimestamp === endTimestamp
@@ -346,8 +348,8 @@ class TransactionBar extends React.Component<Props, State> {
       <RowRectangle
         spanBarHatch={false}
         style={{
-          backgroundColor: barColour,
-          left: `clamp(0%, ${toPercent(startPercentage || 0)}, calc(100% - 1px))`,
+          backgroundColor: barColor,
+          left: `min(${toPercent(startPercentage || 0)}, calc(100% - 1px))`,
           width: toPercent(widthPercentage || 0),
         }}
       >
@@ -416,37 +418,70 @@ class TransactionBar extends React.Component<Props, State> {
     );
   }
 
-  render() {
+  scrollIntoView = () => {
+    const element = this.transactionRowDOMRef.current;
+    if (!element) {
+      return;
+    }
+    const boundingRect = element.getBoundingClientRect();
+    const offset = boundingRect.top + window.scrollY;
+    this.setState({showDetail: true}, () => window.scrollTo(0, offset));
+  };
+
+  renderDetail() {
     const {location, organization, isVisible, transaction} = this.props;
     const {showDetail} = this.state;
 
     return (
+      <AnchorLinkManager.Consumer>
+        {({registerScrollFn, scrollToHash}) => {
+          if (!isTraceFullDetailed(transaction)) {
+            return null;
+          }
+
+          registerScrollFn(`#txn-${transaction.event_id}`, this.scrollIntoView);
+
+          if (!isVisible || !showDetail) {
+            return null;
+          }
+
+          return (
+            <TransactionDetail
+              location={location}
+              organization={organization}
+              transaction={transaction}
+              scrollToHash={scrollToHash}
+            />
+          );
+        }}
+      </AnchorLinkManager.Consumer>
+    );
+  }
+
+  render() {
+    const {isVisible, transaction} = this.props;
+    const {showDetail} = this.state;
+
+    return (
       <Row
+        ref={this.transactionRowDOMRef}
         visible={isVisible}
         showBorder={showDetail}
         cursor={isTraceFullDetailed(transaction) ? 'pointer' : 'default'}
       >
         <ScrollbarManager.Consumer>
-          {scrollbarManagerChildrenProps => {
-            return (
-              <DividerHandlerManager.Consumer>
-                {dividerHandlerChildrenProps =>
-                  this.renderHeader({
-                    dividerHandlerChildrenProps,
-                    scrollbarManagerChildrenProps,
-                  })
-                }
-              </DividerHandlerManager.Consumer>
-            );
-          }}
+          {scrollbarManagerChildrenProps => (
+            <DividerHandlerManager.Consumer>
+              {dividerHandlerChildrenProps =>
+                this.renderHeader({
+                  dividerHandlerChildrenProps,
+                  scrollbarManagerChildrenProps,
+                })
+              }
+            </DividerHandlerManager.Consumer>
+          )}
         </ScrollbarManager.Consumer>
-        {isTraceFullDetailed(transaction) && isVisible && showDetail && (
-          <TransactionDetail
-            location={location}
-            organization={organization}
-            transaction={transaction}
-          />
-        )}
+        {this.renderDetail()}
       </Row>
     );
   }

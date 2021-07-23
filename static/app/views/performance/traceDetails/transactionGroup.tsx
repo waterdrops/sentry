@@ -1,13 +1,17 @@
-import React from 'react';
+import * as React from 'react';
 import {Location} from 'history';
 
+import {
+  ScrollbarManagerChildrenProps,
+  withScrollbarManager,
+} from 'app/components/events/interfaces/spans/scrollbarManager';
 import {Organization} from 'app/types';
 import {TraceFullDetailed} from 'app/utils/performance/quickTrace/types';
 
 import TransactionBar from './transactionBar';
 import {TraceInfo, TraceRoot, TreeDepth} from './types';
 
-type Props = {
+type Props = ScrollbarManagerChildrenProps & {
   location: Location;
   organization: Organization;
   transaction: TraceRoot | TraceFullDetailed;
@@ -19,7 +23,7 @@ type Props = {
   isVisible: boolean;
   hasGuideAnchor: boolean;
   renderedChildren: React.ReactNode[];
-  barColour?: string;
+  barColor?: string;
 };
 
 type State = {
@@ -27,9 +31,15 @@ type State = {
 };
 
 class TransactionGroup extends React.Component<Props, State> {
-  state = {
+  state: State = {
     isExpanded: true,
   };
+
+  componentDidUpdate(_prevProps: Props, prevState: State) {
+    if (prevState.isExpanded !== this.state.isExpanded) {
+      this.props.updateScrollState();
+    }
+  }
 
   toggleExpandedState = () => {
     this.setState(({isExpanded}) => ({isExpanded: !isExpanded}));
@@ -48,7 +58,7 @@ class TransactionGroup extends React.Component<Props, State> {
       isVisible,
       hasGuideAnchor,
       renderedChildren,
-      barColour,
+      barColor,
     } = this.props;
     const {isExpanded} = this.state;
 
@@ -67,7 +77,7 @@ class TransactionGroup extends React.Component<Props, State> {
           toggleExpandedState={this.toggleExpandedState}
           isVisible={isVisible}
           hasGuideAnchor={hasGuideAnchor}
-          barColour={barColour}
+          barColor={barColor}
         />
         {isExpanded && renderedChildren}
       </React.Fragment>
@@ -75,4 +85,4 @@ class TransactionGroup extends React.Component<Props, State> {
   }
 }
 
-export default TransactionGroup;
+export default withScrollbarManager(TransactionGroup);

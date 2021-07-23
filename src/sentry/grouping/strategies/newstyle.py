@@ -1,6 +1,7 @@
 import re
+from typing import Any, Dict, List
 
-from sentry.grouping.component import GroupingComponent
+from sentry.grouping.component import GroupingComponent, calculate_tree_label
 from sentry.grouping.strategies.base import call_with_variants, strategy
 from sentry.grouping.strategies.hierarchical import get_stacktrace_hierarchy
 from sentry.grouping.strategies.message import trim_message_for_grouping
@@ -244,7 +245,7 @@ def get_function_component(
             )
 
     if function_component.values and context["hierarchical_grouping"]:
-        function_component.update(tree_label=function_component.values[0])
+        function_component.update(tree_label={"function": function_component.values[0]})
 
     return function_component
 
@@ -323,7 +324,7 @@ def frame(frame, event, context, **meta):
                 )
 
             if package_component.values and context["hierarchical_grouping"]:
-                package_component.update(tree_label=package_component.values[0])
+                package_component.update(tree_label={"package": package_component.values[0]})
 
             values.append(package_component)
 
@@ -361,6 +362,9 @@ def frame(frame, event, context, **meta):
 
     if context["is_recursion"]:
         rv.update(contributes=False, hint="ignored due to recursion")
+
+    if rv.tree_label:
+        rv.tree_label = {"datapath": frame.datapath, **rv.tree_label}
 
     return {context["variant"]: rv}
 
@@ -512,11 +516,21 @@ def single_exception(exception, context, **meta):
         values=[exception.type] if exception.type else [],
         similarity_encoder=ident_encoder,
     )
+    system_type_component = type_component.shallow_copy()
 
     ns_error_component = None
 
     if exception.mechanism:
         if exception.mechanism.synthetic:
+            # Ignore synthetic exceptions as they are produced from platform
+            # specific error codes.
+            #
+            # For example there can be crashes with EXC_ACCESS_VIOLATION_* on Windows with
+            # the same exact stacktrace as a crash with EXC_BAD_ACCESS on macOS.
+            #
+            # Do not update type component of system variant, such that regex
+            # can be continuously modified without unnecessarily creating new
+            # groups.
             type_component.update(contributes=False, hint="ignored because exception is synthetic")
         if exception.mechanism.meta and "ns_error" in exception.mechanism.meta:
             ns_error_component = GroupingComponent(
@@ -539,7 +553,10 @@ def single_exception(exception, context, **meta):
     rv = {}
 
     for variant, stacktrace_component in stacktrace_variants.items():
-        values = [stacktrace_component, type_component]
+        values = [
+            stacktrace_component,
+            system_type_component if variant == "system" else type_component,
+        ]
 
         if ns_error_component is not None:
             values.append(ns_error_component)
@@ -599,7 +616,11 @@ def chained_exception(chained_exception, context, **meta):
     rv = {}
 
     for name, component_list in by_name.items():
-        rv[name] = GroupingComponent(id="chained-exception", values=component_list)
+        rv[name] = GroupingComponent(
+            id="chained-exception",
+            values=component_list,
+            tree_label=calculate_tree_label(reversed(component_list)),
+        )
 
     return rv
 
@@ -611,17 +632,40 @@ def chained_exception_variant_processor(variants, context, **meta):
 
 @strategy(id="threads:v1", interfaces=["threads"], score=1900)
 def threads(threads_interface, context, **meta):
-    thread_count = len(threads_interface.values)
-    if thread_count != 1:
-        return {
-            "app": GroupingComponent(
-                id="threads",
-                contributes=False,
-                hint="ignored because contains %d threads" % thread_count,
-            )
-        }
+    thread_variants = _filtered_threads(
+        [thread for thread in threads_interface.values if thread.get("crashed")], context, meta
+    )
+    if thread_variants is not None:
+        return thread_variants
 
-    stacktrace = threads_interface.values[0].get("stacktrace")
+    thread_variants = _filtered_threads(
+        [thread for thread in threads_interface.values if thread.get("current")], context, meta
+    )
+    if thread_variants is not None:
+        return thread_variants
+
+    thread_variants = _filtered_threads(threads_interface.values, context, meta)
+    if thread_variants is not None:
+        return thread_variants
+
+    return {
+        "app": GroupingComponent(
+            id="threads",
+            contributes=False,
+            hint=(
+                "ignored because does not contain exactly one crashing, "
+                "one current or just one thread, instead contains %s threads"
+                % len(threads_interface.values)
+            ),
+        )
+    }
+
+
+def _filtered_threads(threads: List[Dict[str, Any]], context, meta):
+    if len(threads) != 1:
+        return None
+
+    stacktrace = threads[0].get("stacktrace")
     if not stacktrace:
         return {
             "app": GroupingComponent(

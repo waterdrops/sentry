@@ -3,7 +3,7 @@ from rest_framework.exceptions import ParseError
 from rest_framework.response import Response
 
 from sentry.api.bases import NoProjects, OrganizationEventsV2EndpointBase
-from sentry.api.event_search import get_function_alias
+from sentry.search.events.fields import get_function_alias
 from sentry.snuba import discover
 
 
@@ -54,8 +54,8 @@ class OrganizationEventsVitalsEndpoint(OrganizationEventsV2EndpointBase):
                 limit=1,
                 referrer="api.events.vitals",
                 auto_fields=True,
-                auto_aggregations=True,
-                use_aggregate_conditions=True,
+                auto_aggregations=False,
+                use_aggregate_conditions=False,
             )
 
         results = {}

@@ -1,4 +1,4 @@
-import {Dataset} from 'app/views/settings/incidentRules/types';
+import {Dataset} from 'app/views/alerts/incidentRules/types';
 
 import {AlertType, WizardRuleTemplate} from './options';
 
@@ -16,7 +16,6 @@ const alertTypeIdentifiers: Record<Dataset, Partial<Record<AlertType, string>>> 
     lcp: 'measurements.lcp',
     fid: 'measurements.fid',
     cls: 'measurements.cls',
-    fcp: 'measurements.fcp',
   },
 };
 

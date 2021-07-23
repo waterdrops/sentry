@@ -11,7 +11,6 @@ from django.db.models import Min
 from django.utils import timezone
 
 from sentry import tagstore, tsdb
-from sentry.api.event_search import convert_search_filter_to_snuba_query
 from sentry.api.serializers import Serializer, register, serialize
 from sentry.api.serializers.models.actor import ActorSerializer
 from sentry.app import env
@@ -50,15 +49,17 @@ from sentry.notifications.helpers import (
 )
 from sentry.notifications.types import NotificationSettingOptionValues, NotificationSettingTypes
 from sentry.reprocessing2 import get_progress
+from sentry.search.events.constants import RELEASE_STAGE_ALIAS
+from sentry.search.events.filter import convert_search_filter_to_snuba_query
 from sentry.tagstore.snuba.backend import fix_tag_value_data
 from sentry.tsdb.snuba import SnubaTSDB
 from sentry.types.integrations import ExternalProviders
-from sentry.utils import snuba
+from sentry.utils import metrics
 from sentry.utils.cache import cache
 from sentry.utils.compat import zip
 from sentry.utils.db import attach_foreignkey
 from sentry.utils.safe import safe_execute
-from sentry.utils.snuba import Dataset, raw_query
+from sentry.utils.snuba import Dataset, aliased_query, raw_query
 
 # TODO(jess): remove when snuba is primary backend
 snuba_tsdb = SnubaTSDB(**settings.SENTRY_TSDB_OPTIONS)
@@ -77,17 +78,12 @@ class GroupSerializerBase(Serializer):
         self,
         collapse=None,
         expand=None,
-        has_inbox=False,
     ):
         self.collapse = collapse
         self.expand = expand
-        self.has_inbox = has_inbox
 
     def _expand(self, key):
         if self.expand is None:
-            return False
-
-        if key == "inbox" and not self.has_inbox:
             return False
 
         return key in self.expand
@@ -231,7 +227,7 @@ class GroupSerializerBase(Serializer):
         # making unnecessary queries.
         attach_foreignkey(item_list, Group.project, related=("organization",))
 
-        if user.is_authenticated() and item_list:
+        if user.is_authenticated and item_list:
             bookmarks = set(
                 GroupBookmark.objects.filter(user=user, group__in=item_list).values_list(
                     "group_id", flat=True
@@ -313,7 +309,7 @@ class GroupSerializerBase(Serializer):
             return {}
         if len(organization_id_list) > 1:
             # this should never happen but if it does we should know about it
-            logger.warn(
+            logger.warning(
                 "Found multiple organizations for groups: %s, with orgs: %s"
                 % ([item.id for item in item_list], organization_id_list)
             )
@@ -485,7 +481,7 @@ class GroupSerializerBase(Serializer):
         if (
             is_superuser
             or is_valid_sentryapp
-            or (user.is_authenticated() and user.get_orgs().filter(id=obj.organization.id).exists())
+            or (user.is_authenticated and user.get_orgs().filter(id=obj.organization.id).exists())
         ):
             with sentry_sdk.start_span(op="GroupSerializerBase.serialize.permalink.build"):
                 return obj.get_absolute_url()
@@ -756,6 +752,10 @@ class GroupSerializerSnuba(GroupSerializerBase):
         "times_seen",
         "date",  # We merge this with start/end, so don't want to include it as its own
         # condition
+        # We don't need to filter by release stage again here since we're
+        # filtering to specific groups. Saves us making a second query to
+        # postgres for no reason
+        RELEASE_STAGE_ALIAS,
     }
 
     def __init__(
@@ -766,13 +766,9 @@ class GroupSerializerSnuba(GroupSerializerBase):
         search_filters=None,
         collapse=None,
         expand=None,
-        has_inbox=False,
+        organization_id=None,
     ):
-        super().__init__(
-            collapse=collapse,
-            expand=expand,
-            has_inbox=has_inbox,
-        )
+        super().__init__(collapse=collapse, expand=expand)
         from sentry.search.snuba.executors import get_search_filter
 
         self.environment_ids = environment_ids
@@ -783,7 +779,7 @@ class GroupSerializerSnuba(GroupSerializerBase):
         self.start = None
         start_params = [_f for _f in [start, get_search_filter(search_filters, "date", ">")] if _f]
         if start_params:
-            self.start = max([_f for _f in start_params if _f])
+            self.start = max(_f for _f in start_params if _f)
 
         self.end = None
         end_params = [_f for _f in [end, get_search_filter(search_filters, "date", "<")] if _f]
@@ -792,7 +788,9 @@ class GroupSerializerSnuba(GroupSerializerBase):
 
         self.conditions = (
             [
-                convert_search_filter_to_snuba_query(search_filter)
+                convert_search_filter_to_snuba_query(
+                    search_filter, params={"organization_id": organization_id}
+                )
                 for search_filter in search_filters
                 if search_filter.key.name not in self.skip_snuba_fields
             ]
@@ -814,8 +812,8 @@ class GroupSerializerSnuba(GroupSerializerBase):
         filters = {"project_id": project_ids, "group_id": group_ids}
         if self.environment_ids:
             filters["environment"] = self.environment_ids
-        result = snuba.aliased_query(
-            dataset=snuba.Dataset.Events,
+        result = aliased_query(
+            dataset=Dataset.Events,
             start=start,
             end=end,
             groupby=["group_id"],
@@ -858,6 +856,7 @@ class GroupSerializerSnuba(GroupSerializerBase):
                 "last_seen": last_seen.get(item.id),
                 "user_count": user_counts.get(item.id, 0),
             }
+
         return attrs
 
     def _get_seen_stats(self, item_list, user):
@@ -883,7 +882,7 @@ class StreamGroupSerializerSnuba(GroupSerializerSnuba, GroupStatsMixin):
         search_filters=None,
         collapse=None,
         expand=None,
-        has_inbox=False,
+        organization_id=None,
     ):
         super().__init__(
             environment_ids,
@@ -892,7 +891,7 @@ class StreamGroupSerializerSnuba(GroupSerializerSnuba, GroupStatsMixin):
             search_filters,
             collapse=collapse,
             expand=expand,
-            has_inbox=has_inbox,
+            organization_id=organization_id,
         )
 
         if stats_period is not None:
@@ -973,6 +972,55 @@ class StreamGroupSerializerSnuba(GroupSerializerSnuba, GroupStatsMixin):
                     attrs[item].update({"filtered_stats": filtered_stats[item.id]})
                 attrs[item].update({"stats": stats[item.id]})
 
+            if self._expand("sessions"):
+                uniq_project_ids = list({item.project_id for item in item_list})
+                cache_keys = {pid: self._build_session_cache_key(pid) for pid in uniq_project_ids}
+                cache_data = cache.get_many(cache_keys.values())
+                missed_items = []
+                for item in item_list:
+                    num_sessions = cache_data.get(cache_keys[item.project_id])
+                    if num_sessions is None:
+                        found = "miss"
+                        missed_items.append(item)
+                    else:
+                        found = "hit"
+                        attrs[item].update(
+                            {
+                                "sessionCount": num_sessions,
+                            }
+                        )
+                    metrics.incr(f"group.get_session_counts.{found}")
+
+                if missed_items:
+                    filters = {"project_id": list({item.project_id for item in missed_items})}
+                    if self.environment_ids:
+                        filters["environment"] = self.environment_ids
+
+                    result_totals = raw_query(
+                        selected_columns=["sessions"],
+                        dataset=Dataset.Sessions,
+                        start=self.start,
+                        end=self.end,
+                        filter_keys=filters,
+                        groupby=["project_id"],
+                        referrer="serializers.GroupSerializerSnuba.session_totals",
+                    )
+                    results = {}
+                    for data in result_totals["data"]:
+                        cache_key = self._build_session_cache_key(data["project_id"])
+                        results[data["project_id"]] = data["sessions"]
+                        cache.set(cache_key, data["sessions"], 3600)
+
+                    for item in missed_items:
+                        if item.project_id in results.keys():
+                            attrs[item].update(
+                                {
+                                    "sessionCount": results[item.project_id],
+                                }
+                            )
+                        else:
+                            attrs[item].update({"sessionCount": None})
+
         if self._expand("inbox"):
             inbox_stats = get_inbox_details(item_list)
             for item in item_list:
@@ -1019,6 +1067,9 @@ class StreamGroupSerializerSnuba(GroupSerializerSnuba, GroupStatsMixin):
                 else:
                     result["filtered"] = None
 
+            if self._expand("sessions"):
+                result["sessionCount"] = attrs["sessionCount"]
+
         if self._expand("inbox"):
             result["inbox"] = attrs["inbox"]
 
@@ -1026,3 +1077,22 @@ class StreamGroupSerializerSnuba(GroupSerializerSnuba, GroupStatsMixin):
             result["owners"] = attrs["owners"]
 
         return result
+
+    def _build_session_cache_key(self, project_id):
+        session_count_key = f"w-s:{project_id}"
+
+        if self.start:
+            session_count_key = f"{session_count_key}-{self.start.replace(minute=0, second=0, microsecond=0, tzinfo=None)}".replace(
+                " ", ""
+            )
+
+        if self.end:
+            session_count_key = f"{session_count_key}-{self.end.replace(minute=0, second=0, microsecond=0, tzinfo=None)}".replace(
+                " ", ""
+            )
+
+        if self.environment_ids:
+            envs = "-".join(str(eid) for eid in self.environment_ids)
+            session_count_key = f"{session_count_key}-{envs}"
+
+        return session_count_key

@@ -1,16 +1,11 @@
-import React from 'react';
-import {withTheme} from 'emotion-theming';
+import * as React from 'react';
+import {withTheme} from '@emotion/react';
 import isEqual from 'lodash/isEqual';
 import omit from 'lodash/omit';
 
 import {addErrorMessage} from 'app/actionCreators/indicator';
 import {Client} from 'app/api';
-import {
-  DateTimeObject,
-  getDiffInMinutes,
-  SIXTY_DAYS,
-  THIRTY_DAYS,
-} from 'app/components/charts/utils';
+import {getSeriesApiInterval} from 'app/components/charts/utils';
 import {getParams} from 'app/components/organizations/globalSelectionHeader/getParams';
 import {t} from 'app/locale';
 import {GlobalSelection, Organization, SessionApiResponse} from 'app/types';
@@ -31,22 +26,6 @@ import {shouldFetchPreviousPeriod} from '../utils';
 const omitIgnoredProps = (props: Props) =>
   omit(props, ['api', 'organization', 'children', 'selection.datetime.utc']);
 
-function getInterval(datetimeObj: DateTimeObject) {
-  const diffInMinutes = getDiffInMinutes(datetimeObj);
-
-  if (diffInMinutes >= SIXTY_DAYS) {
-    // Greater than or equal to 60 days
-    return '1d';
-  }
-
-  if (diffInMinutes >= THIRTY_DAYS) {
-    // Greater than or equal to 30 days
-    return '4h';
-  }
-
-  return '1h';
-}
-
 type ReleaseStatsRequestRenderProps = {
   loading: boolean;
   reloading: boolean;
@@ -65,6 +44,7 @@ type Props = {
   displayMode: DisplayModes.SESSIONS | DisplayModes.STABILITY;
   theme: Theme;
   disablePrevious?: boolean;
+  query?: string;
 };
 
 type State = {
@@ -101,13 +81,8 @@ class SessionsRequest extends React.Component<Props, State> {
   private unmounting: boolean = false;
 
   fetchData = async () => {
-    const {
-      api,
-      selection,
-      onTotalValuesChange,
-      displayMode,
-      disablePrevious,
-    } = this.props;
+    const {api, selection, onTotalValuesChange, displayMode, disablePrevious} =
+      this.props;
     const shouldFetchWithPrevious =
       !disablePrevious && shouldFetchPreviousPeriod(selection.datetime);
 
@@ -156,15 +131,16 @@ class SessionsRequest extends React.Component<Props, State> {
   }
 
   queryParams({shouldFetchWithPrevious = false}) {
-    const {selection} = this.props;
+    const {selection, query} = this.props;
     const {datetime, projects, environments: environment} = selection;
 
     const baseParams = {
       field: 'sum(session)',
       groupBy: 'session.status',
-      interval: getInterval(datetime),
+      interval: getSeriesApiInterval(datetime),
       project: projects[0],
       environment,
+      query,
     };
 
     if (!shouldFetchWithPrevious) {
@@ -296,6 +272,8 @@ class SessionsRequest extends React.Component<Props, State> {
   }
 
   transformSessionCountData(responseData: SessionApiResponse) {
+    const {theme} = this.props;
+
     const totalSessions = getTotalsFromSessionsResponse({
       response: responseData,
       field: 'sum(session)',
@@ -305,7 +283,7 @@ class SessionsRequest extends React.Component<Props, State> {
       response: responseData,
       field: 'sum(session)',
       groupBy: 'session.status',
-      chartData: initSessionsBreakdownChartData(),
+      chartData: initSessionsBreakdownChartData(theme),
     });
 
     return {
@@ -317,13 +295,8 @@ class SessionsRequest extends React.Component<Props, State> {
 
   render() {
     const {children} = this.props;
-    const {
-      timeseriesData,
-      reloading,
-      errored,
-      totalSessions,
-      previousTimeseriesData,
-    } = this.state;
+    const {timeseriesData, reloading, errored, totalSessions, previousTimeseriesData} =
+      this.state;
     const loading = timeseriesData === null;
 
     return children({

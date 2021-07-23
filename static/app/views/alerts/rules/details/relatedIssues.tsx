@@ -1,4 +1,4 @@
-import React from 'react';
+import {Component, Fragment} from 'react';
 import styled from '@emotion/styled';
 
 import Button from 'app/components/button';
@@ -11,7 +11,8 @@ import {IconInfo} from 'app/icons';
 import {t} from 'app/locale';
 import space from 'app/styles/space';
 import {OrganizationSummary, Project} from 'app/types';
-import {IncidentRule} from 'app/views/settings/incidentRules/types';
+import {DATASET_EVENT_TYPE_FILTERS} from 'app/views/alerts/incidentRules/constants';
+import {IncidentRule} from 'app/views/alerts/incidentRules/types';
 
 import {TimePeriodType} from './constants';
 
@@ -22,7 +23,7 @@ type Props = {
   timePeriod: TimePeriodType;
 };
 
-class RelatedIssues extends React.Component<Props> {
+class RelatedIssues extends Component<Props> {
   renderEmptyMessage = () => {
     return (
       <Panel>
@@ -45,8 +46,14 @@ class RelatedIssues extends React.Component<Props> {
       end,
       groupStatsPeriod: 'auto',
       limit: 5,
+      ...(rule.environment ? {environment: rule.environment} : {}),
       sort: rule.aggregate === 'count_unique(user)' ? 'user' : 'freq',
-      query: rule.query,
+      query: [
+        rule.query,
+        rule.eventTypes?.length
+          ? `event.type:[${rule.eventTypes.join(`, `)}]`
+          : DATASET_EVENT_TYPE_FILTERS[rule.dataset],
+      ].join(' '),
       project: projects.map(project => project.id),
     };
     const issueSearch = {
@@ -55,14 +62,14 @@ class RelatedIssues extends React.Component<Props> {
     };
 
     return (
-      <React.Fragment>
+      <Fragment>
         <ControlsWrapper>
-          <SectionHeading>
+          <StyledSectionHeading>
             {t('Related Issues')}
             <Tooltip title={t('Top issues containing events matching the metric.')}>
-              <IconInfo size="xs" />
+              <IconInfo size="xs" color="gray200" />
             </Tooltip>
-          </SectionHeading>
+          </StyledSectionHeading>
           <Button data-test-id="issues-open" size="small" to={issueSearch}>
             {t('Open in Issues')}
           </Button>
@@ -80,12 +87,18 @@ class RelatedIssues extends React.Component<Props> {
             withPagination={false}
             useFilteredStats
             customStatsPeriod={timePeriod}
+            useTintRow={false}
           />
         </TableWrapper>
-      </React.Fragment>
+      </Fragment>
     );
   }
 }
+
+const StyledSectionHeading = styled(SectionHeading)`
+  display: flex;
+  align-items: center;
+`;
 
 const ControlsWrapper = styled('div')`
   display: flex;

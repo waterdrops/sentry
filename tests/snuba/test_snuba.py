@@ -124,7 +124,7 @@ class SnubaTest(TestCase, SnubaTestCase):
     def test_should_use_snql(self) -> None:
         base_time = datetime.utcnow()
 
-        with self.options({"snuba.snql.referrer-rate": 1.0}):
+        with self.options({"snuba.snql.snql_only": 1.0}):
             assert (
                 snuba.query(
                     start=base_time - timedelta(days=1),
@@ -201,7 +201,7 @@ class BulkRawQueryTest(TestCase, SnubaTestCase):
                     filter_keys={"project_id": [self.project.id], "group_id": [event_2.group.id]},
                 ),
             ],
-            snql_entity="auto",
+            use_snql=True,
         )
         assert [{(item["group_id"], item["event_id"]) for item in r["data"]} for r in results] == [
             {(event_1.group.id, event_1.event_id)},

@@ -1,4 +1,3 @@
-import React from 'react';
 import styled from '@emotion/styled';
 import startCase from 'lodash/startCase';
 
@@ -59,7 +58,7 @@ const IntegrationRow = (props: Props) => {
     if (type === 'sentryApp') {
       return publishStatus !== 'published' && <PublishStatus status={publishStatus} />;
     }
-    //TODO: Use proper translations
+    // TODO: Use proper translations
     return configurations > 0 ? (
       <StyledLink to={`${baseUrl}?tab=configurations`}>{`${configurations} Configuration${
         configurations > 1 ? 's' : ''
@@ -68,7 +67,7 @@ const IntegrationRow = (props: Props) => {
   };
 
   const renderStatus = () => {
-    //status should be undefined for document integrations
+    // status should be undefined for document integrations
     if (status) {
       return <IntegrationStatus status={status} />;
     }
@@ -76,7 +75,7 @@ const IntegrationRow = (props: Props) => {
   };
 
   return (
-    <PanelItem p={0} flexDirection="column" data-test-id={slug}>
+    <PanelRow noPadding data-test-id={slug}>
       <FlexContainer>
         <PluginIcon size={36} pluginId={slug} />
         <Container>
@@ -119,9 +118,13 @@ const IntegrationRow = (props: Props) => {
           </Alert>
         </AlertContainer>
       )}
-    </PanelItem>
+    </PanelRow>
   );
 };
+
+const PanelRow = styled(PanelItem)`
+  flex-direction: column;
+`;
 
 const FlexContainer = styled('div')`
   display: flex;

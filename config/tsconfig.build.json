@@ -9,7 +9,7 @@
     "inlineSources": false,
     "importHelpers": true,
     "lib": ["esnext", "dom"],
-    "module": "esnext",
+    "module": "commonjs",
     "moduleResolution": "node",
     "noEmitHelpers": true,
     "noFallthroughCasesInSwitch": true,
@@ -36,10 +36,9 @@
       "app/*": ["static/app/*"],
       "sentry-test/*": ["tests/js/sentry-test/*"],
       "sentry-images/*": ["static/images/*"],
+      "sentry-locale/*": ["src/sentry/locale/*"],
       "sentry-logos/*": ["src/sentry/static/sentry/images/logos/*"],
       "sentry-fonts/*": ["static/fonts/*"],
-      "@emotion/styled": ["static/app/styled.tsx"],
-      "@original-emotion/*": ["node_modules/@emotion/*"],
       // Use the stub file for typechecking. Webpack resolver will use the real files
       // based on configuration.
       "integration-docs-platforms": [

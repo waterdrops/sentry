@@ -69,7 +69,7 @@ metadata = IntegrationMetadata(
     features=FEATURES,
     author="The Sentry Team",
     noun=_("Installation"),
-    issue_url="https://github.com/getsentry/sentry/issues/new?assignees=&labels=Component:%20Integrations&template=bug_report.md&title=GitLab%20Integration%20Problem",
+    issue_url="https://github.com/getsentry/sentry/issues/new?assignees=&labels=Component:%20Integrations&template=bug.yml&title=GitLab%20Integration%20Problem",
     source_url="https://github.com/getsentry/sentry/tree/master/src/sentry/integrations/gitlab",
     aspects={},
 )
@@ -90,6 +90,19 @@ class GitlabIntegration(IntegrationInstallation, GitlabIssueBasic, RepositoryMix
             self.default_identity = self.get_default_identity()
 
         return GitLabApiClient(self)
+
+    def get_codeowner_file(self, repo, ref=None):
+        filepath_options = ["CODEOWNERS", ".gitlab/CODEOWNERS", "docs/CODEOWNERS"]
+        for filepath in filepath_options:
+            try:
+                contents = self.get_client().get_file(repo, filepath, ref)
+            except ApiError:
+                continue
+
+            html_url = self.format_source_url(repo, filepath, ref)
+            return {"filepath": filepath, "html_url": html_url, "raw": contents}
+
+        return None
 
     def get_repositories(self, query=None):
         # Note: gitlab projects are the same things as repos everywhere else
@@ -260,6 +273,7 @@ class GitlabIntegrationProvider(IntegrationProvider):
             IntegrationFeatures.ISSUE_BASIC,
             IntegrationFeatures.COMMITS,
             IntegrationFeatures.STACKTRACE_LINK,
+            IntegrationFeatures.CODEOWNERS,
         ]
     )
 

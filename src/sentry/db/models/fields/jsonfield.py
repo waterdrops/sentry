@@ -67,7 +67,7 @@ class JSONField(models.TextField):
             raise ValidationError(self.error_messages["null"])
         try:
             self.get_prep_value(value)
-        except BaseException:
+        except Exception:
             raise ValidationError(self.error_messages["invalid"] % value)
 
     def get_default(self):
@@ -112,7 +112,7 @@ class JSONField(models.TextField):
         return json.dumps(value, default=default, **self.encoder_kwargs)
 
     def value_to_string(self, obj):
-        return self._get_val_from_obj(obj)
+        return self.value_from_object(obj)
 
 
 class NoPrepareMixin:

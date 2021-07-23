@@ -23,6 +23,8 @@ SUPPORTED_RUNTIMES = [
 
 INVALID_LAYER_TEXT = "Invalid existing layer %s"
 MISSING_ROLE_TEXT = "Invalid role associated with the lambda function"
+TOO_MANY_REQUESTS_TEXT = "Something went wrong! Please enable function manually after installation"
+ENV_VARS_LIMIT_TEXT = "Environment variables size limit of 4KB was exceeded"
 
 DEFAULT_NUM_RETRIES = 3
 
@@ -313,6 +315,15 @@ def get_invalid_layer_name(err_message):
     return None
 
 
+def get_too_many_requests_error_message(err_message):
+    """
+    Check to see if an error is a TooManyRequestsException
+    :param err_message: error string
+    :return boolean value if the error matches the too many requests error
+    """
+    return "TooManyRequestsException" in err_message
+
+
 def get_missing_role_error(err_message):
     """
     Check to see if an error matches the missing role text
@@ -328,6 +339,21 @@ def get_missing_role_error(err_message):
     return err_message == missing_role_err
 
 
+def get_exceeded_env_vars_limit_error(err_message):
+    """
+    Check to see if an error matches the env vars limit text
+    :param err_message: error string
+    :return boolean value if the error matches the env vars limit text
+    """
+    env_vars_limit_error = (
+        "An error occurred (InvalidParameterValueException) when calling "
+        "the UpdateFunctionConfiguration operation: Lambda was unable to configure "
+        "your environment variables because the environment variables you "
+        "have provided exceeded the 4KB limit."
+    )
+    return env_vars_limit_error in err_message
+
+
 def get_sentry_err_message(err_message):
     """
     Check to see if an error matches a custom error and customizes the error
@@ -338,9 +364,12 @@ def get_sentry_err_message(err_message):
     invalid_layer = get_invalid_layer_name(err_message)
     if invalid_layer:
         return True, (INVALID_LAYER_TEXT % invalid_layer)
-    missing_role = get_missing_role_error(err_message)
-    if missing_role:
+    if get_missing_role_error(err_message):
         return True, MISSING_ROLE_TEXT
+    if get_too_many_requests_error_message(err_message):
+        return True, TOO_MANY_REQUESTS_TEXT
+    if get_exceeded_env_vars_limit_error(err_message):
+        return True, ENV_VARS_LIMIT_TEXT
     return False, err_message
 
 

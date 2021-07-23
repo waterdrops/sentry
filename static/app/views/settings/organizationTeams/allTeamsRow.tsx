@@ -1,9 +1,10 @@
-import React from 'react';
+import * as React from 'react';
 import {Link} from 'react-router';
 import styled from '@emotion/styled';
 
 import {addErrorMessage, addSuccessMessage} from 'app/actionCreators/indicator';
 import {joinTeam, leaveTeam} from 'app/actionCreators/teams';
+import TeamActions from 'app/actions/teamActions';
 import {Client} from 'app/api';
 import Button from 'app/components/button';
 import IdBadge from 'app/components/idBadge';
@@ -27,7 +28,7 @@ type State = {
 };
 
 class AllTeamsRow extends React.Component<Props, State> {
-  state = {
+  state: State = {
     loading: false,
     error: false,
   };
@@ -46,7 +47,11 @@ class AllTeamsRow extends React.Component<Props, State> {
         }),
       });
 
-      // TODO: Ideally we would update team so that `isPending` is true
+      // Update team so that `isPending` is true
+      TeamActions.updateSuccess(team.slug, {
+        ...team,
+        isPending: true,
+      });
     } catch (_err) {
       // No need to do anything
     }
@@ -65,7 +70,13 @@ class AllTeamsRow extends React.Component<Props, State> {
     });
   };
 
-  joinTeam = ({successMessage, errorMessage}) => {
+  joinTeam = ({
+    successMessage,
+    errorMessage,
+  }: {
+    successMessage: React.ReactNode;
+    errorMessage: React.ReactNode;
+  }) => {
     const {api, organization, team} = this.props;
 
     this.setState({
@@ -174,7 +185,13 @@ class AllTeamsRow extends React.Component<Props, State> {
               {t('Leave Team')}
             </Button>
           ) : team.isPending ? (
-            <Button size="small" disabled>
+            <Button
+              size="small"
+              disabled
+              title={t(
+                'Your request to join this team is being reviewed by organization owners'
+              )}
+            >
               {t('Request Pending')}
             </Button>
           ) : openMembership ? (

@@ -23,9 +23,9 @@ class AuthOrganizationLoginView(AuthLoginView):
             )
 
             if request.POST.get("init"):
-                helper.init_pipeline()
+                helper.initialize()
 
-            if not helper.pipeline_is_valid():
+            if not helper.is_valid():
                 return helper.error("Something unexpected happened during authentication.")
 
             return helper.current_step()
@@ -37,7 +37,7 @@ class AuthOrganizationLoginView(AuthLoginView):
             "organization": organization,
             "provider_key": provider.key,
             "provider_name": provider.name,
-            "authenticated": request.user.is_authenticated(),
+            "authenticated": request.user.is_authenticated,
         }
 
         return self.respond("sentry/organization-login.html", context)

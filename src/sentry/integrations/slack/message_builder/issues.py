@@ -1,9 +1,12 @@
-from typing import List, Mapping, Union
+import re
+from typing import Any, List, Mapping, Optional, Sequence, Tuple, Union
 
 from django.core.cache import cache
 
 from sentry import tagstore
-from sentry.integrations.slack.utils import ACTIONED_ISSUE_COLOR, LEVEL_TO_COLOR
+from sentry.eventstore.models import Event
+from sentry.integrations.slack.message_builder import LEVEL_TO_COLOR, SlackBody
+from sentry.integrations.slack.message_builder.base.base import SlackMessageBuilder
 from sentry.models import (
     ActorTuple,
     Group,
@@ -17,13 +20,16 @@ from sentry.models import (
     Team,
     User,
 )
+from sentry.notifications.base import BaseNotification
+from sentry.notifications.rules import AlertRuleNotification
 from sentry.utils import json
-from sentry.utils.assets import get_asset_url
 from sentry.utils.dates import to_timestamp
 from sentry.utils.http import absolute_uri
 
+from ..utils import build_notification_footer
 
-def format_actor_option(actor: Union[User, Team]):
+
+def format_actor_option(actor: Union[User, Team]) -> Mapping[str, str]:
     if isinstance(actor, User):
         return {"text": actor.get_display_name(), "value": f"user:{actor.id}"}
     if isinstance(actor, Team):
@@ -32,7 +38,7 @@ def format_actor_option(actor: Union[User, Team]):
     raise NotImplementedError
 
 
-def get_member_assignees(group: Group):
+def get_member_assignees(group: Group) -> Sequence[Mapping[str, str]]:
     queryset = (
         OrganizationMember.objects.filter(
             user__is_active=True,
@@ -43,16 +49,16 @@ def get_member_assignees(group: Group):
         .select_related("user")
     )
 
-    members = sorted(queryset, key=lambda u: u.user.get_display_name())
+    members = sorted(queryset, key=lambda u: u.user.get_display_name())  # type: ignore
 
     return [format_actor_option(u.user) for u in members]
 
 
-def get_team_assignees(group: Group):
+def get_team_assignees(group: Group) -> Sequence[Mapping[str, str]]:
     return [format_actor_option(u) for u in group.project.teams.all()]
 
 
-def get_assignee(group: Group):
+def get_assignee(group: Group) -> Optional[Mapping[str, str]]:
     try:
         assigned_actor = GroupAssignee.objects.get(group=group).assigned_actor()
     except GroupAssignee.DoesNotExist:
@@ -64,7 +70,7 @@ def get_assignee(group: Group):
         return None
 
 
-def build_attachment_title(obj):
+def build_attachment_title(obj: Union[Group, Event]) -> Any:
     ev_metadata = obj.get_event_metadata()
     ev_type = obj.get_event_type()
 
@@ -76,7 +82,7 @@ def build_attachment_title(obj):
         return obj.title
 
 
-def build_attachment_text(group: Group, event=None):
+def build_attachment_text(group: Group, event: Optional[Event] = None) -> Optional[Any]:
     # Group and Event both implement get_event_{type,metadata}
     obj = event if event is not None else group
     ev_metadata = obj.get_event_metadata()
@@ -88,13 +94,13 @@ def build_attachment_text(group: Group, event=None):
         return None
 
 
-def build_assigned_text(identity: Identity, assignee: str):
+def build_assigned_text(identity: Identity, assignee: str) -> Optional[str]:
     actor = ActorTuple.from_actor_identifier(assignee)
 
     try:
         assigned_actor = actor.resolve()
     except actor.type.DoesNotExist:
-        return
+        return None
 
     if actor.type == Team:
         assignee_text = f"#{assigned_actor.slug}"
@@ -112,7 +118,7 @@ def build_assigned_text(identity: Identity, assignee: str):
     return f"*Issue assigned to {assignee_text} by <@{identity.external_id}>*"
 
 
-def build_action_text(group: Group, identity: Identity, action):
+def build_action_text(group: Group, identity: Identity, action: Mapping[str, Any]) -> Optional[str]:
     if action["name"] == "assign":
         return build_assigned_text(identity, action["selected_options"][0]["value"])
 
@@ -123,37 +129,68 @@ def build_action_text(group: Group, identity: Identity, action):
 
     # Action has no valid action text, ignore
     if status not in statuses:
-        return
+        return None
 
     return "*Issue {status} by <@{user_id}>*".format(
         status=statuses[status], user_id=identity.external_id
     )
 
 
-def build_rule_url(rule: Rule, group: Group, project: Project):
+def build_rule_url(rule: Any, group: Group, project: Project) -> Any:
     org_slug = group.organization.slug
     project_slug = project.slug
     rule_url = f"/organizations/{org_slug}/alerts/rules/{project_slug}/{rule.id}/"
     return absolute_uri(rule_url)
 
 
-def build_group_attachment(
-    group: Group,
-    event=None,
-    tags: Mapping[str, str] = None,
-    identity: Identity = None,
-    actions=None,
-    rules: List[Rule] = None,
-    link_to_event: bool = False,
-):
-    # XXX(dcramer): options are limited to 100 choices, even when nested
-    status = group.get_status()
+def build_footer(group: Group, project: Project, rules: Optional[Sequence[Rule]] = None) -> str:
+    footer = f"{group.qualified_short_id}"
+    if rules:
+        rule_url = build_rule_url(rules[0], group, project)
+        footer += f" via <{rule_url}|{rules[0].label}>"
 
+        if len(rules) > 1:
+            footer += f" (+{len(rules) - 1} other)"
+
+    return footer
+
+
+def build_tag_fields(
+    event_for_tags: Any, tags: Optional[Mapping[str, str]] = None
+) -> Sequence[Mapping[str, Union[str, bool]]]:
+    fields = []
+    if tags:
+        event_tags = event_for_tags.tags if event_for_tags else []
+        for key, value in event_tags:
+            std_key = tagstore.get_standardized_key(key)
+            if std_key not in tags:
+                continue
+
+            labeled_value = tagstore.get_tag_value_label(key, value)
+            fields.append(
+                {
+                    "title": std_key.encode("utf-8"),
+                    "value": labeled_value.encode("utf-8"),
+                    "short": True,
+                }
+            )
+    return fields
+
+
+def build_actions(
+    group: Group,
+    project: Project,
+    text: str,
+    color: str,
+    actions: Optional[Sequence[Any]] = None,
+    identity: Optional[Identity] = None,
+) -> Tuple[Sequence[Any], str, str]:
+    """
+    Having actions means a button will be shown on the Slack message e.g. ignore, resolve, assign
+    """
+    status = group.get_status()
     members = get_member_assignees(group)
     teams = get_team_assignees(group)
-
-    logo_url = absolute_uri(get_asset_url("sentry", "images/sentry-email-avatar.png"))
-    text = build_attachment_text(group, event) or ""
 
     if actions is None:
         actions = []
@@ -169,9 +206,7 @@ def build_group_attachment(
 
     ignore_button = {"name": "status", "value": "ignored", "type": "button", "text": "Ignore"}
 
-    project = Project.objects.get_from_cache(id=group.project_id)
-
-    cache_key = "has_releases:2:%s" % (project.id)
+    cache_key = "has_releases:2:%s" % project.id
     has_releases = cache.get(cache_key)
     if has_releases is None:
         has_releases = ReleaseProject.objects.filter(project_id=project.id).exists()
@@ -209,72 +244,123 @@ def build_group_attachment(
         },
     ]
 
-    # If an event is unspecified, use the tags of the latest event (if one exists).
-    event_for_tags = event if event else group.get_latest_event()
-
-    fallback_color = LEVEL_TO_COLOR["error"]
-    color = (
-        LEVEL_TO_COLOR.get(event_for_tags.get_tag("level"), fallback_color)
-        if event_for_tags
-        else fallback_color
-    )
-
-    fields = []
-    if tags:
-        event_tags = event_for_tags.tags if event_for_tags else []
-        for key, value in event_tags:
-            std_key = tagstore.get_standardized_key(key)
-            if std_key not in tags:
-                continue
-
-            labeled_value = tagstore.get_tag_value_label(key, value)
-            fields.append(
-                {
-                    "title": std_key.encode("utf-8"),
-                    "value": labeled_value.encode("utf-8"),
-                    "short": True,
-                }
-            )
-
     if actions:
         action_texts = [_f for _f in [build_action_text(group, identity, a) for a in actions] if _f]
         text += "\n" + "\n".join(action_texts)
 
-        color = ACTIONED_ISSUE_COLOR
+        color = "_actioned_issue"
         payload_actions = []
 
-    ts = group.last_seen
+    return payload_actions, text, color
 
-    if event:
-        event_ts = event.datetime
-        ts = max(ts, event_ts)
 
-    footer = f"{group.qualified_short_id}"
-
-    if rules:
-        rule_url = build_rule_url(rules[0], group, project)
-        footer += f" via <{rule_url}|{rules[0].label}>"
-
-        if len(rules) > 1:
-            footer += f" (+{len(rules) - 1} other)"
-
-    obj = event if event is not None else group
+def get_title_link(
+    group: Group,
+    event: Optional[Event],
+    link_to_event: bool,
+    issue_details: bool,
+    notification: Optional[BaseNotification],
+) -> Any:
     if event and link_to_event:
-        title_link = group.get_absolute_url(params={"referrer": "slack"}, event_id=event.event_id)
-    else:
-        title_link = group.get_absolute_url(params={"referrer": "slack"})
+        return group.get_absolute_url(params={"referrer": "slack"}, event_id=event.event_id)
 
-    return {
-        "fallback": f"[{project.slug}] {obj.title}",
-        "title": build_attachment_title(obj),
-        "title_link": title_link,
-        "text": text,
-        "fields": fields,
-        "mrkdwn_in": ["text"],
-        "callback_id": json.dumps({"issue": group.id}),
-        "footer_icon": logo_url,
-        "footer": footer,
-        "ts": to_timestamp(ts),
-        "color": color,
-        "actions": payload_actions,
-    }
+    if issue_details:
+        referrer = re.sub("Notification$", "Slack", notification.__class__.__name__)
+        return group.get_absolute_url(params={"referrer": referrer})
+
+    return group.get_absolute_url(params={"referrer": "slack"})
+
+
+def get_timestamp(group: Group, event: Optional[Event]) -> float:
+    ts = group.last_seen
+    return to_timestamp(max(ts, event.datetime) if event else ts)
+
+
+def get_color(event_for_tags: Optional[Event], notification: Optional[BaseNotification]) -> str:
+    if notification:
+        if not isinstance(notification, AlertRuleNotification):
+            return "info"
+    if event_for_tags:
+        color: Optional[str] = event_for_tags.get_tag("level")
+        if color and color in LEVEL_TO_COLOR.keys():
+            return color
+    return "error"
+
+
+class SlackIssuesMessageBuilder(SlackMessageBuilder):
+    def __init__(
+        self,
+        group: Group,
+        event: Optional[Event] = None,
+        tags: Optional[Mapping[str, str]] = None,
+        identity: Optional[Identity] = None,
+        actions: Optional[Sequence[Any]] = None,
+        rules: Optional[List[Rule]] = None,
+        link_to_event: bool = False,
+        issue_details: bool = False,
+        notification: Optional[BaseNotification] = None,
+        recipient: Optional[Union[Team, User]] = None,
+    ) -> None:
+        super().__init__()
+        self.group = group
+        self.event = event
+        self.tags = tags
+        self.identity = identity
+        self.actions = actions
+        self.rules = rules
+        self.link_to_event = link_to_event
+        self.issue_details = issue_details
+        self.notification = notification
+        self.recipient = recipient
+
+    def build(self) -> SlackBody:
+        # XXX(dcramer): options are limited to 100 choices, even when nested
+        text = build_attachment_text(self.group, self.event) or ""
+        project = Project.objects.get_from_cache(id=self.group.project_id)
+
+        # If an event is unspecified, use the tags of the latest event (if one exists).
+        event_for_tags = self.event or self.group.get_latest_event()
+        color = get_color(event_for_tags, self.notification)
+        fields = build_tag_fields(event_for_tags, self.tags)
+        footer = (
+            build_notification_footer(self.notification, self.recipient)
+            if self.notification and self.recipient
+            else build_footer(self.group, project, self.rules)
+        )
+        obj = self.event if self.event is not None else self.group
+        if not self.issue_details or (self.recipient and isinstance(self.recipient, Team)):
+            payload_actions, text, color = build_actions(
+                self.group, project, text, color, self.actions, self.identity
+            )
+        else:
+            payload_actions = []
+        return self._build(
+            actions=payload_actions,
+            callback_id=json.dumps({"issue": self.group.id}),
+            color=color,
+            fallback=f"[{project.slug}] {obj.title}",
+            fields=fields,
+            footer=footer,
+            text=text,
+            title=build_attachment_title(obj),
+            title_link=get_title_link(
+                self.group, self.event, self.link_to_event, self.issue_details, self.notification
+            ),
+            ts=get_timestamp(self.group, self.event) if not self.issue_details else None,
+        )
+
+
+def build_group_attachment(
+    group: Group,
+    event: Optional[Event] = None,
+    tags: Optional[Mapping[str, str]] = None,
+    identity: Optional[Identity] = None,
+    actions: Optional[Sequence[Any]] = None,
+    rules: Optional[List[Rule]] = None,
+    link_to_event: bool = False,
+    issue_details: bool = False,
+) -> SlackBody:
+    """@deprecated"""
+    return SlackIssuesMessageBuilder(
+        group, event, tags, identity, actions, rules, link_to_event, issue_details
+    ).build()

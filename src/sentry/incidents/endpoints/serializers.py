@@ -7,10 +7,10 @@ from django.utils import timezone
 from django.utils.encoding import force_text
 from rest_framework import serializers
 
-from sentry.api.event_search import InvalidSearchQuery
 from sentry.api.serializers.rest_framework.base import CamelSnakeModelSerializer
 from sentry.api.serializers.rest_framework.environment import EnvironmentField
 from sentry.api.serializers.rest_framework.project import ProjectField
+from sentry.exceptions import InvalidSearchQuery
 from sentry.incidents.logic import (
     CRITICAL_TRIGGER_LABEL,
     WARNING_TRIGGER_LABEL,
@@ -125,10 +125,8 @@ class AlertRuleTriggerActionSerializer(CamelSnakeModelSerializer):
             type_info = AlertRuleTriggerAction.get_registered_type(type)
             if target_type not in type_info.supported_target_types:
                 allowed_target_types = ",".join(
-                    [
-                        action_target_type_to_string[type_name]
-                        for type_name in type_info.supported_target_types
-                    ]
+                    action_target_type_to_string[type_name]
+                    for type_name in type_info.supported_target_types
                 )
                 raise serializers.ValidationError(
                     {
@@ -472,7 +470,7 @@ class AlertRuleSerializer(CamelSnakeModelSerializer):
         if event_types and set(event_types) - valid_event_types:
             raise serializers.ValidationError(
                 "Invalid event types for this dataset. Valid event types are %s"
-                % sorted([et.name.lower() for et in valid_event_types])
+                % sorted(et.name.lower() for et in valid_event_types)
             )
 
         for i, (trigger, expected_label) in enumerate(

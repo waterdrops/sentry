@@ -4,13 +4,14 @@ from typing import Any, List, Mapping, MutableMapping, Optional, Sequence, Set
 from sentry import roles
 from sentry.api.serializers import Serializer, register, serialize
 from sentry.models import (
-    ExternalUser,
+    ExternalActor,
     OrganizationMember,
     OrganizationMemberTeam,
     Team,
     TeamStatus,
     User,
 )
+from sentry.scim.endpoints.constants import SCIM_SCHEMA_USER
 from sentry.utils.json import JSONData
 
 
@@ -22,23 +23,30 @@ def get_serialized_users_by_id(users_set: Set[User], user: User) -> Mapping[str,
 def get_team_slugs_by_organization_member_id(
     organization_members: Sequence[OrganizationMember],
 ) -> Mapping[int, List[str]]:
-    """ @returns a map of member id -> team_slug[] """
+    """@returns a map of member id -> team_slug[]"""
     organization_member_tuples = list(
         OrganizationMemberTeam.objects.filter(
             team__status=TeamStatus.VISIBLE, organizationmember__in=organization_members
         ).values_list("organizationmember_id", "team_id")
     )
-    team_ids_by_organization_member_id = {
-        organization_member_id: team_id
-        for organization_member_id, team_id in organization_member_tuples
-    }
-    teams = Team.objects.filter(id__in=team_ids_by_organization_member_id.values())
+    team_ids = {team_id for (_organization_member_id, team_id) in organization_member_tuples}
+    teams = Team.objects.filter(id__in=team_ids)
     teams_by_id = {team.id: team for team in teams}
 
     results = defaultdict(list)
-    for member_id, team_id in team_ids_by_organization_member_id.items():
+    for member_id, team_id in organization_member_tuples:
         results[member_id].append(teams_by_id[team_id].slug)
     return results
+
+
+def get_organization_id(organization_members: Sequence[OrganizationMember]) -> int:
+    """Ensure all organization_members have the same organization ID and then return that ID."""
+    organization_ids = {
+        organization_member.organization_id for organization_member in organization_members
+    }
+    if len(organization_ids) != 1:
+        raise Exception("Cannot determine organization")
+    return int(organization_ids.pop())
 
 
 @register(OrganizationMember)
@@ -50,7 +58,7 @@ class OrganizationMemberSerializer(Serializer):  # type: ignore
         self, item_list: Sequence[OrganizationMember], user: User, **kwargs: Any
     ) -> MutableMapping[OrganizationMember, MutableMapping[str, Any]]:
         """
-        Fetch all of the associated Users and ExternalUsers needed to serialize
+        Fetch all of the associated Users and ExternalActors needed to serialize
         the organization_members in `item_list`.
         TODO(dcramer): assert on relations
         """
@@ -64,20 +72,27 @@ class OrganizationMemberSerializer(Serializer):  # type: ignore
         external_users_map = defaultdict(list)
 
         if "externalUsers" in self.expand:
-            external_users = list(ExternalUser.objects.filter(organizationmember__in=item_list))
+            organization_id = get_organization_id(item_list)
+            external_actors = list(
+                ExternalActor.objects.filter(
+                    actor_id__in={user.actor_id for user in users_set},
+                    organization_id=organization_id,
+                )
+            )
 
-            for external_user in external_users:
-                serialized = serialize(external_user, user)
-                external_users_map[external_user.organizationmember_id].append(serialized)
+            serialized_list = serialize(external_actors, user, key="user")
+            for serialized in serialized_list:
+                external_users_map[serialized["userId"]].append(serialized)
 
         attrs: MutableMapping[OrganizationMember, MutableMapping[str, Any]] = {}
         for item in item_list:
             user = users_by_id.get(str(item.user_id), None)
+            user_id = user["id"] if user else ""
+            external_users = external_users_map.get(user_id, [])
             attrs[item] = {
                 "user": user,
-                "externalUsers": external_users_map.get(item.id),
+                "externalUsers": external_users,
             }
-
         return attrs
 
     def serialize(
@@ -95,6 +110,7 @@ class OrganizationMemberSerializer(Serializer):  # type: ignore
             "flags": {
                 "sso:linked": bool(getattr(obj.flags, "sso:linked")),
                 "sso:invalid": bool(getattr(obj.flags, "sso:invalid")),
+                "member-limit:restricted": bool(getattr(obj.flags, "member-limit:restricted")),
             },
             "dateCreated": obj.date_added,
             "inviteStatus": obj.get_invite_status_name(),
@@ -173,4 +189,26 @@ class OrganizationMemberWithProjectsSerializer(OrganizationMemberSerializer):
     ) -> MutableMapping[str, JSONData]:
         d = super().serialize(obj, attrs, user)
         d["projects"] = attrs.get("projects", [])
+        return d
+
+
+class OrganizationMemberSCIMSerializer(Serializer):  # type: ignore
+    def __init__(self, expand: Optional[Sequence[str]] = None) -> None:
+        self.expand = expand or []
+
+    def serialize(
+        self, obj: OrganizationMember, attrs: Mapping[str, Any], user: Any, **kwargs: Any
+    ) -> MutableMapping[str, JSONData]:
+
+        d = {
+            "schemas": [SCIM_SCHEMA_USER],
+            "id": str(obj.id),
+            "userName": obj.get_email(),  # TODO: does this get weird with secondary emails?
+            "name": {"givenName": "N/A", "familyName": "N/A"},
+            "emails": [
+                {"primary": True, "value": obj.get_email(), "type": "work"}
+            ],  # TODO: secondary emails?
+            "active": True,
+            "meta": {"resourceType": "User"},
+        }
         return d

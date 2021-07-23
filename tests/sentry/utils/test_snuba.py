@@ -209,6 +209,10 @@ class SnubaUtilsTest(TestCase):
             get_snuba_column_name("spans.key", Dataset.Transactions)
             == "span_op_breakdowns[ops.key]"
         )
+        assert (
+            get_snuba_column_name("spans.total.time", Dataset.Transactions)
+            == "span_op_breakdowns[total.time]"
+        )
         assert get_snuba_column_name("spans.KEY", Dataset.Discover) == "span_op_breakdowns[ops.key]"
         assert (
             get_snuba_column_name("spans.KEY", Dataset.Transactions)
@@ -319,7 +323,7 @@ class QuantizeTimeTest(unittest.TestCase):
         assert changed_on_hour == 1
 
     def test_quantize_time_matches_duration(self):
-        """ The number of seconds between keys changing should match duration """
+        """The number of seconds between keys changing should match duration"""
         previous_key = quantize_time(self.now, 0, duration=10)
         changes = []
         for i in range(21):

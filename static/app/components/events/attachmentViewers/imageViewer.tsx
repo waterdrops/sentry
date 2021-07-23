@@ -1,4 +1,4 @@
-import React from 'react';
+import styled from '@emotion/styled';
 
 import {
   getAttachmentUrl,
@@ -6,10 +6,16 @@ import {
 } from 'app/components/events/attachmentViewers/utils';
 import {PanelItem} from 'app/components/panels';
 
-export default function ImageViewer(props: ViewerProps) {
+function ImageViewer({className, ...props}: ViewerProps) {
   return (
-    <PanelItem justifyContent="center">
+    <Container className={className}>
       <img src={getAttachmentUrl(props, true)} />
-    </PanelItem>
+    </Container>
   );
 }
+
+export default ImageViewer;
+
+const Container = styled(PanelItem)`
+  justify-content: center;
+`;

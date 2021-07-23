@@ -61,8 +61,7 @@ class OrganizationAlertRulesListTest(AcceptanceTestCase, SnubaTestCase):
         with self.feature(
             [
                 "organizations:incidents",
-                "organizations:alert-list",
-                "organizations:team-alerts-ownership",
+                "organizations:alert-details-redesign",
             ]
         ):
             self.browser.get(self.path)

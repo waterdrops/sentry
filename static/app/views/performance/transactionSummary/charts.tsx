@@ -1,4 +1,4 @@
-import React from 'react';
+import {Component} from 'react';
 import {browserHistory} from 'react-router';
 import {Location} from 'history';
 
@@ -15,6 +15,7 @@ import Placeholder from 'app/components/placeholder';
 import {t} from 'app/locale';
 import {OrganizationSummary, SelectValue} from 'app/types';
 import EventView from 'app/utils/discover/eventView';
+import {removeHistogramQueryStrings} from 'app/utils/performance/histogram';
 import {decodeScalar} from 'app/utils/queryString';
 import {TransactionsListOption} from 'app/views/releases/detail/overview';
 import {YAxis} from 'app/views/releases/detail/overview/chart/releaseChartControls';
@@ -22,14 +23,14 @@ import {YAxis} from 'app/views/releases/detail/overview/chart/releaseChartContro
 import {TrendColumnField, TrendFunctionField} from '../trends/types';
 import {
   generateTrendFunctionAsString,
+  getTrendsParameters,
   TRENDS_FUNCTIONS,
-  TRENDS_PARAMETERS,
 } from '../trends/utils';
 
 import DurationChart from './durationChart';
 import DurationPercentileChart from './durationPercentileChart';
 import {SpanOperationBreakdownFilter} from './filter';
-import LatencyChart, {LatencyChartControls} from './latencyChart';
+import LatencyChart, {LatencyChartControls, ZOOM_END, ZOOM_START} from './latencyChart';
 import TrendChart from './trendChart';
 import VitalsChart from './vitalsChart';
 
@@ -71,12 +72,6 @@ const TREND_FUNCTIONS_OPTIONS: SelectValue<string>[] = TRENDS_FUNCTIONS.map(
     label,
   })
 );
-const TREND_PARAMETERS_OPTIONS: SelectValue<string>[] = TRENDS_PARAMETERS.map(
-  ({column, label}) => ({
-    value: column,
-    label,
-  })
-);
 
 type Props = {
   organization: OrganizationSummary;
@@ -86,12 +81,15 @@ type Props = {
   currentFilter: SpanOperationBreakdownFilter;
 };
 
-class TransactionSummaryCharts extends React.Component<Props> {
+class TransactionSummaryCharts extends Component<Props> {
   handleDisplayChange = (value: string) => {
     const {location} = this.props;
     browserHistory.push({
       pathname: location.pathname,
-      query: {...location.query, display: value},
+      query: {
+        ...removeHistogramQueryStrings(location, [ZOOM_START, ZOOM_END]),
+        display: value,
+      },
     });
   };
 
@@ -113,6 +111,14 @@ class TransactionSummaryCharts extends React.Component<Props> {
 
   render() {
     const {totalValues, eventView, organization, location, currentFilter} = this.props;
+
+    const TREND_PARAMETERS_OPTIONS: SelectValue<string>[] = getTrendsParameters({
+      canSeeSpanOpTrends: organization.features.includes('performance-ops-breakdown'),
+    }).map(({column, label}) => ({
+      value: column,
+      label,
+    }));
+
     let display = decodeScalar(location.query.display, DisplayModes.DURATION);
     let trendFunction = decodeScalar(
       location.query.trendFunction,

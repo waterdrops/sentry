@@ -1,4 +1,4 @@
-import React from 'react';
+import * as React from 'react';
 import {Link as RouterLink, withRouter, WithRouterProps} from 'react-router';
 import isPropValid from '@emotion/is-prop-valid';
 import styled from '@emotion/styled';
@@ -10,11 +10,11 @@ type AnchorProps = React.HTMLProps<HTMLAnchorElement>;
 type ToLocationFunction = (location: Location) => LocationDescriptor;
 
 type Props = WithRouterProps & {
-  //URL
+  // URL
   to: ToLocationFunction | LocationDescriptor;
   // Styles applied to the component's root
   className?: string;
-} & Omit<AnchorProps, 'href' | 'target'>;
+} & Omit<AnchorProps, 'href' | 'target' | 'as' | 'css'>;
 
 /**
  * A context-aware version of Link (from react-router) that falls

@@ -26,6 +26,7 @@ class GitLabApiClientPath:
     project_issues = "/projects/{project}/issues"
     project_hooks = "/projects/{project}/hooks"
     project_hook = "/projects/{project}/hooks/{hook_id}"
+    project_search = "/projects/{project}/search"
     user = "/user"
 
     @staticmethod
@@ -236,7 +237,7 @@ class GitLabApiClient(ApiClient):
         return self.get(path, params={"until": end_date})
 
     def compare_commits(self, project_id, start_sha, end_sha):
-        """Compare commits between two shas
+        """Compare commits between two SHAs
 
         See https://docs.gitlab.com/ee/api/repositories.html#compare-branches-tags-or-commits
         """
@@ -270,3 +271,20 @@ class GitLabApiClient(ApiClient):
             if e.code != 400:
                 raise
             return None
+
+    def get_file(self, repo, path, ref):
+        """Get the contents of a file
+
+        See https://docs.gitlab.com/ee/api/repository_files.html#get-file-from-repository
+        Path requires file path and ref
+        file_path must also be URL encoded Ex. lib%2Fclass%2Erb
+        """
+        from base64 import b64decode
+
+        project_id = repo.config["project_id"]
+        encoded_path = quote(path, safe="")
+        request_path = GitLabApiClientPath.file.format(project=project_id, path=encoded_path)
+        contents = self.get(request_path, params={"ref": ref})
+
+        encoded_content = contents["content"]
+        return b64decode(encoded_content)

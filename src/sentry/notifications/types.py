@@ -45,7 +45,7 @@ class NotificationSettingTypes(Enum):
 NOTIFICATION_SETTING_TYPES = {
     NotificationSettingTypes.DEFAULT: "default",
     NotificationSettingTypes.DEPLOY: "deploy",
-    NotificationSettingTypes.ISSUE_ALERTS: "issue",
+    NotificationSettingTypes.ISSUE_ALERTS: "alerts",
     NotificationSettingTypes.WORKFLOW: "workflow",
 }
 
@@ -76,8 +76,8 @@ class NotificationSettingOptionValues(Enum):
 
 NOTIFICATION_SETTING_OPTION_VALUES = {
     NotificationSettingOptionValues.DEFAULT: "default",
-    NotificationSettingOptionValues.NEVER: "off",
-    NotificationSettingOptionValues.ALWAYS: "on",
+    NotificationSettingOptionValues.NEVER: "never",
+    NotificationSettingOptionValues.ALWAYS: "always",
     NotificationSettingOptionValues.SUBSCRIBE_ONLY: "subscribe_only",
     NotificationSettingOptionValues.COMMITTED_ONLY: "committed_only",
 }
@@ -87,12 +87,14 @@ class NotificationScopeType(Enum):
     USER = 0
     ORGANIZATION = 10
     PROJECT = 20
+    TEAM = 30
 
 
 NOTIFICATION_SCOPE_TYPE = {
     NotificationScopeType.USER: "user",
     NotificationScopeType.ORGANIZATION: "organization",
     NotificationScopeType.PROJECT: "project",
+    NotificationScopeType.TEAM: "team",
 }
 
 
@@ -127,13 +129,6 @@ VALID_VALUES_FOR_KEY = {
         NotificationSettingOptionValues.SUBSCRIBE_ONLY,
         NotificationSettingOptionValues.NEVER,
     },
-}
-
-
-NOTIFICATION_SETTING_DEFAULTS = {
-    NotificationSettingTypes.DEPLOY: NotificationSettingOptionValues.COMMITTED_ONLY,
-    NotificationSettingTypes.ISSUE_ALERTS: NotificationSettingOptionValues.ALWAYS,
-    NotificationSettingTypes.WORKFLOW: NotificationSettingOptionValues.SUBSCRIBE_ONLY,
 }
 
 
@@ -173,3 +168,29 @@ SUBSCRIPTION_REASON_MAP = {
     GroupSubscriptionReason.status_change: "changed_status",
     GroupSubscriptionReason.mentioned: "mentioned",
 }
+
+
+class ActionTargetType(Enum):
+    ISSUE_OWNERS = "IssueOwners"
+    TEAM = "Team"
+    MEMBER = "Member"
+
+
+ACTION_CHOICES = [
+    (ActionTargetType.ISSUE_OWNERS.value, "Issue Owners"),
+    (ActionTargetType.TEAM.value, "Team"),
+    (ActionTargetType.MEMBER.value, "Member"),
+]
+
+
+class AssigneeTargetType(Enum):
+    UNASSIGNED = "Unassigned"
+    TEAM = "Team"
+    MEMBER = "Member"
+
+
+ASSIGNEE_CHOICES = [
+    (AssigneeTargetType.UNASSIGNED.value, "Unassigned"),
+    (AssigneeTargetType.TEAM.value, "Team"),
+    (AssigneeTargetType.MEMBER.value, "Member"),
+]

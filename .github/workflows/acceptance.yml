@@ -64,15 +64,11 @@ jobs:
           name: jest-html
           path: .artifacts/visual-snapshots/jest
 
-      - name: Get CSS filename
-        id: css-manifest
-        run: echo "::set-output name=sentrycss::$(jq -r '.["sentry.css"]' src/sentry/static/sentry/dist/manifest.json)"
-
       - name: Create Images from HTML
         uses: getsentry/action-html-to-image@main
         with:
           base-path: .artifacts/visual-snapshots/jest
-          css-path: src/sentry/static/sentry/dist/${{ steps.css-manifest.outputs.sentrycss }}
+          css-path: src/sentry/static/sentry/dist/entrypoints/sentry.css
 
       - name: Save snapshots
         if: always()
@@ -87,7 +83,7 @@ jobs:
   acceptance:
     name: acceptance
     runs-on: ubuntu-20.04
-    timeout-minutes: 20
+    timeout-minutes: 25
     strategy:
       matrix:
         instance: [0, 1, 2, 3]
@@ -106,6 +102,10 @@ jobs:
         id: python-version
         run: |
           echo "::set-output name=python-version::$(cat .python-version)"
+
+      - name: Setup webpack cache
+        id: webpack-cache
+        run: echo "::set-output name=path::.webpack_cache"
 
       # Until GH composite actions can use `uses`, we need to setup python here
       - uses: actions/setup-python@v2
@@ -140,12 +140,21 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-yarn-
 
+      - name: webpack cache
+        uses: actions/cache@v2
+        with:
+          path: ${{ steps.webpack-cache.outputs.path }}
+          key: ${{ runner.os }}-webpack-cache-${{ hashFiles('webpack.config.js') }}
+          restore-keys: |
+            ${{ runner.os }}-webpack-cache-
+
       - name: Install Javascript Dependencies
         run: |
           yarn install --frozen-lockfile
 
       - name: webpack
         env:
+          WEBPACK_CACHE_PATH: ${{ steps.webpack-cache.outputs.path }}
           SENTRY_INSTRUMENTATION: 1
           # this is fine to not have for forks, it shouldn't fail
           SENTRY_WEBPACK_WEBHOOK_SECRET: ${{ secrets.SENTRY_WEBPACK_WEBHOOK_SECRET }}

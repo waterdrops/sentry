@@ -1,4 +1,4 @@
-import {css} from '@emotion/core';
+import {css} from '@emotion/react';
 import styled from '@emotion/styled';
 
 import space from 'app/styles/space';
@@ -11,7 +11,7 @@ type Props = {
   /**
    * Usually we place controls at the right of a panel header, to make the
    * spacing between the edges correct we will want less padding on the right.
-   * Use this when the panel has somthing such as buttons living there.
+   * Use this when the panel has something such as buttons living there.
    */
   hasButtons?: boolean;
   /**

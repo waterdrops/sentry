@@ -1,4 +1,4 @@
-import React from 'react';
+import {Fragment} from 'react';
 import {RouteComponentProps} from 'react-router';
 import styled from '@emotion/styled';
 
@@ -17,7 +17,10 @@ import AsyncView from 'app/views/asyncView';
 import AddIntegration from 'app/views/organizationIntegrations/addIntegration';
 import IntegrationAlertRules from 'app/views/organizationIntegrations/integrationAlertRules';
 import IntegrationCodeMappings from 'app/views/organizationIntegrations/integrationCodeMappings';
+import IntegrationExternalTeamMappings from 'app/views/organizationIntegrations/integrationExternalTeamMappings';
+import IntegrationExternalUserMappings from 'app/views/organizationIntegrations/integrationExternalUserMappings';
 import IntegrationItem from 'app/views/organizationIntegrations/integrationItem';
+import IntegrationMainSettings from 'app/views/organizationIntegrations/integrationMainSettings';
 import IntegrationRepos from 'app/views/organizationIntegrations/integrationRepos';
 import IntegrationServerlessFunctions from 'app/views/organizationIntegrations/integrationServerlessFunctions';
 import Form from 'app/views/settings/components/forms/form';
@@ -33,7 +36,7 @@ type Props = RouteComponentProps<RouteParams, {}> & {
   organization: Organization;
 };
 
-type Tab = 'repos' | 'codeMappings';
+type Tab = 'repos' | 'codeMappings' | 'userMappings' | 'teamMappings' | 'settings';
 
 type State = AsyncView['state'] & {
   config: {providers: IntegrationProvider[]};
@@ -52,7 +55,11 @@ class ConfigureIntegration extends AsyncView<Props, State> {
 
   componentDidMount() {
     const {location} = this.props;
-    const value = location.query.tab === 'codeMappings' ? 'codeMappings' : 'repos';
+    const value =
+      (['codeMappings', 'userMappings', 'teamMappings'] as const).find(
+        tab => tab === location.query.tab
+      ) || 'repos';
+
     // eslint-disable-next-line react/no-did-mount-set-state
     this.setState({tab: value});
   }
@@ -78,9 +85,23 @@ class ConfigureIntegration extends AsyncView<Props, State> {
   }
 
   hasStacktraceLinking(provider: IntegrationProvider) {
+    // CodeOwners will only work if the provider has StackTrace Linking
     return (
       provider.features.includes('stacktrace-link') &&
       this.props.organization.features.includes('integrations-stacktrace-link')
+    );
+  }
+
+  hasCodeOwners() {
+    return this.props.organization.features.includes('integrations-codeowners');
+  }
+
+  isCustomIntegration() {
+    const {integration} = this.state;
+    const {organization} = this.props;
+    return (
+      organization.features.includes('integrations-custom-scm') &&
+      integration.provider.key === 'custom_scm'
     );
   }
 
@@ -122,7 +143,7 @@ class ConfigureIntegration extends AsyncView<Props, State> {
     return action;
   };
 
-  //TODO(Steve): Refactor components into separate tabs and use more generic tab logic
+  // TODO(Steve): Refactor components into separate tabs and use more generic tab logic
   renderMainTab(provider: IntegrationProvider) {
     const {orgId} = this.props.params;
     const {integration} = this.state;
@@ -131,7 +152,7 @@ class ConfigureIntegration extends AsyncView<Props, State> {
       integration.dynamicDisplayInformation?.configure_integration?.instructions;
 
     return (
-      <React.Fragment>
+      <Fragment>
         <BreadcrumbTitle routes={this.props.routes} title={integration.provider.name} />
 
         {integration.configOrganization.length > 0 && (
@@ -182,7 +203,7 @@ class ConfigureIntegration extends AsyncView<Props, State> {
         {provider.features.includes('serverless') && (
           <IntegrationServerlessFunctions integration={integration} />
         )}
-      </React.Fragment>
+      </Fragment>
     );
   }
 
@@ -201,45 +222,72 @@ class ConfigureIntegration extends AsyncView<Props, State> {
     );
 
     return (
-      <React.Fragment>
+      <Fragment>
         {header}
         {this.renderMainContent(provider)}
-      </React.Fragment>
+      </Fragment>
     );
   }
 
-  //renders everything below header
+  // renders everything below header
   renderMainContent(provider: IntegrationProvider) {
-    const {integration} = this.state;
-    //if no code mappings, render the single tab
+    // if no code mappings, render the single tab
     if (!this.hasStacktraceLinking(provider)) {
       return this.renderMainTab(provider);
     }
-    //otherwise render the tab view
+    // otherwise render the tab view
     const tabs = [
       ['repos', t('Repositories')],
       ['codeMappings', t('Code Mappings')],
-    ] as const;
+      ...(this.hasCodeOwners() ? [['userMappings', t('User Mappings')]] : []),
+      ...(this.hasCodeOwners() ? [['teamMappings', t('Team Mappings')]] : []),
+    ];
+
+    if (this.isCustomIntegration()) {
+      tabs.unshift(['settings', t('Settings')]);
+    }
+
     return (
-      <React.Fragment>
+      <Fragment>
         <NavTabs underlined>
           {tabs.map(tabTuple => (
             <li
               key={tabTuple[0]}
               className={this.tab === tabTuple[0] ? 'active' : ''}
-              onClick={() => this.onTabChange(tabTuple[0])}
+              onClick={() => this.onTabChange(tabTuple[0] as Tab)}
             >
               <CapitalizedLink>{tabTuple[1]}</CapitalizedLink>
             </li>
           ))}
         </NavTabs>
-        {this.tab === 'codeMappings' ? (
-          <IntegrationCodeMappings integration={integration} />
-        ) : (
-          this.renderMainTab(provider)
-        )}
-      </React.Fragment>
+        {this.renderTabContent(this.tab, provider)}
+      </Fragment>
     );
+  }
+
+  renderTabContent(tab: Tab, provider: IntegrationProvider) {
+    const {integration} = this.state;
+    const {organization} = this.props;
+    switch (tab) {
+      case 'codeMappings':
+        return <IntegrationCodeMappings integration={integration} />;
+      case 'repos':
+        return this.renderMainTab(provider);
+      case 'userMappings':
+        return <IntegrationExternalUserMappings integration={integration} />;
+      case 'teamMappings':
+        return <IntegrationExternalTeamMappings integration={integration} />;
+      case 'settings':
+        return (
+          <IntegrationMainSettings
+            onUpdate={this.onUpdateIntegration}
+            organization={organization}
+            integration={integration}
+          />
+        );
+      default:
+        return this.renderMainTab(provider);
+    }
   }
 }
 

@@ -1,4 +1,4 @@
-import React from 'react';
+import * as React from 'react';
 import {Params} from 'react-router/lib/Router';
 import * as Sentry from '@sentry/react';
 import {Location} from 'history';
@@ -8,29 +8,30 @@ import GuideAnchor from 'app/components/assistant/guideAnchor';
 import ButtonBar from 'app/components/buttonBar';
 import DiscoverFeature from 'app/components/discover/discoverFeature';
 import DiscoverButton from 'app/components/discoverButton';
+import * as AnchorLinkManager from 'app/components/events/interfaces/spans/anchorLinkManager';
 import * as DividerHandlerManager from 'app/components/events/interfaces/spans/dividerHandlerManager';
 import * as ScrollbarManager from 'app/components/events/interfaces/spans/scrollbarManager';
-import FeatureBadge from 'app/components/featureBadge';
 import * as Layout from 'app/components/layouts/thirds';
 import ExternalLink from 'app/components/links/externalLink';
 import Link from 'app/components/links/link';
 import LoadingError from 'app/components/loadingError';
 import LoadingIndicator from 'app/components/loadingIndicator';
-import TimeSince from 'app/components/timeSince';
-import {MessageRow} from 'app/components/waterfallTree/messageRow';
+import {MessageRow} from 'app/components/performance/waterfall/messageRow';
 import {
   DividerSpacer,
   ScrollbarContainer,
   VirtualScrollbar,
   VirtualScrollbarGrip,
-} from 'app/components/waterfallTree/miniHeader';
-import {pickBarColour, toPercent} from 'app/components/waterfallTree/utils';
+} from 'app/components/performance/waterfall/miniHeader';
+import {pickBarColor, toPercent} from 'app/components/performance/waterfall/utils';
+import TimeSince from 'app/components/timeSince';
 import {IconInfo} from 'app/icons';
 import {t, tct, tn} from 'app/locale';
 import {Organization} from 'app/types';
 import {createFuzzySearch} from 'app/utils/createFuzzySearch';
 import EventView from 'app/utils/discover/eventView';
 import {getDuration} from 'app/utils/formatters';
+import getDynamicText from 'app/utils/getDynamicText';
 import {TraceFullDetailed, TraceMeta} from 'app/utils/performance/quickTrace/types';
 import {filterTrace, reduceTrace} from 'app/utils/performance/quickTrace/utils';
 import Breadcrumb from 'app/views/performance/breadcrumb';
@@ -96,6 +97,17 @@ class TraceDetailsContent extends React.Component<Props, State> {
   }
 
   renderTraceNotFound() {
+    const {meta} = this.props;
+
+    const transactions = meta?.transactions ?? 0;
+    const errors = meta?.errors ?? 0;
+
+    if (transactions === 0 && errors > 0) {
+      return (
+        <LoadingError message={t('The trace you are looking contains only errors.')} />
+      );
+    }
+
     return <LoadingError message={t('The trace you are looking for was not found.')} />;
   }
 
@@ -227,7 +239,10 @@ class TraceDetailsContent extends React.Component<Props, State> {
             2,
             true
           )}
-          subtext={<TimeSince date={(traceInfo.endTimestamp || 0) * 1000} />}
+          subtext={getDynamicText({
+            value: <TimeSince date={(traceInfo.endTimestamp || 0) * 1000} />,
+            fixed: '5 days ago',
+          })}
         />
       </TraceDetailHeader>
     );
@@ -433,7 +448,7 @@ class TraceDetailsContent extends React.Component<Props, State> {
             isVisible={isVisible}
             hasGuideAnchor={hasGuideAnchor}
             renderedChildren={accumulated.renderedChildren}
-            barColour={pickBarColour(transaction['transaction.op'])}
+            barColor={pickBarColor(transaction['transaction.op'])}
           />
         </React.Fragment>
       ),
@@ -505,16 +520,29 @@ class TraceDetailsContent extends React.Component<Props, State> {
               >
                 <StyledPanel>
                   <TraceViewHeaderContainer>
-                    <ScrollbarContainer
-                      ref={this.virtualScrollbarContainerRef}
-                      style={{
-                        // the width of this component is shrunk to compensate for half of the width of the divider line
-                        width: `calc(${toPercent(dividerPosition)} - 0.5px)`,
-                      }}
-                    >
-                      <ScrollbarManager.Consumer>
-                        {({virtualScrollbarRef, onDragStart}) => {
-                          return (
+                    <ScrollbarManager.Consumer>
+                      {({
+                        virtualScrollbarRef,
+                        scrollBarAreaRef,
+                        onDragStart,
+                        onScroll,
+                      }) => {
+                        return (
+                          <ScrollbarContainer
+                            ref={this.virtualScrollbarContainerRef}
+                            style={{
+                              // the width of this component is shrunk to compensate for half of the width of the divider line
+                              width: `calc(${toPercent(dividerPosition)} - 0.5px)`,
+                            }}
+                            onScroll={onScroll}
+                          >
+                            <div
+                              style={{
+                                width: 0,
+                                height: '1px',
+                              }}
+                              ref={scrollBarAreaRef}
+                            />
                             <VirtualScrollbar
                               data-type="virtual-scrollbar"
                               ref={virtualScrollbarRef}
@@ -522,35 +550,37 @@ class TraceDetailsContent extends React.Component<Props, State> {
                             >
                               <VirtualScrollbarGrip />
                             </VirtualScrollbar>
-                          );
-                        }}
-                      </ScrollbarManager.Consumer>
-                    </ScrollbarContainer>
+                          </ScrollbarContainer>
+                        );
+                      }}
+                    </ScrollbarManager.Consumer>
                     <DividerSpacer />
                   </TraceViewHeaderContainer>
                   <TraceViewContainer ref={this.traceViewRef}>
-                    <TransactionGroup
-                      location={location}
-                      organization={organization}
-                      traceInfo={traceInfo}
-                      transaction={{
-                        traceSlug,
-                        generation: 0,
-                        'transaction.duration':
-                          traceInfo.endTimestamp - traceInfo.startTimestamp,
-                        children: traces,
-                        start_timestamp: traceInfo.startTimestamp,
-                        timestamp: traceInfo.endTimestamp,
-                      }}
-                      continuingDepths={[]}
-                      isOrphan={false}
-                      isLast={false}
-                      index={0}
-                      isVisible
-                      hasGuideAnchor={false}
-                      renderedChildren={transactionGroups}
-                      barColour={pickBarColour('')}
-                    />
+                    <AnchorLinkManager.Provider>
+                      <TransactionGroup
+                        location={location}
+                        organization={organization}
+                        traceInfo={traceInfo}
+                        transaction={{
+                          traceSlug,
+                          generation: 0,
+                          'transaction.duration':
+                            traceInfo.endTimestamp - traceInfo.startTimestamp,
+                          children: traces,
+                          start_timestamp: traceInfo.startTimestamp,
+                          timestamp: traceInfo.endTimestamp,
+                        }}
+                        continuingDepths={[]}
+                        isOrphan={false}
+                        isLast={false}
+                        index={0}
+                        isVisible
+                        hasGuideAnchor={false}
+                        renderedChildren={transactionGroups}
+                        barColor={pickBarColor('')}
+                      />
+                    </AnchorLinkManager.Provider>
                     {this.renderInfoMessage({
                       isVisible: true,
                       numberOfHiddenTransactionsAbove,
@@ -606,7 +636,6 @@ class TraceDetailsContent extends React.Component<Props, State> {
             />
             <Layout.Title data-test-id="trace-header">
               {t('Trace ID: %s', traceSlug)}
-              <FeatureBadge type="new" />
             </Layout.Title>
           </Layout.HeaderContent>
           <Layout.HeaderActions>

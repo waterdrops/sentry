@@ -5,8 +5,8 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import pytz
 
-from sentry.api.event_search import get_filter
 from sentry.api.utils import get_date_range_from_params
+from sentry.search.events.filter import get_filter
 from sentry.utils.dates import parse_stats_period, to_datetime, to_timestamp
 from sentry.utils.snuba import Dataset, raw_query, resolve_condition
 
@@ -93,13 +93,17 @@ class SessionsField:
         if status is None:
             return row["sessions"]
         if status == "healthy":
-            return row["sessions"] - row["sessions_errored"]
+            healthy_sessions = row["sessions"] - row["sessions_errored"]
+            return max(healthy_sessions, 0)
         if status == "abnormal":
             return row["sessions_abnormal"]
         if status == "crashed":
             return row["sessions_crashed"]
         if status == "errored":
-            return row["sessions_errored"]
+            errored_sessions = (
+                row["sessions_errored"] - row["sessions_crashed"] - row["sessions_abnormal"]
+            )
+            return max(errored_sessions, 0)
         return 0
 
 
@@ -116,13 +120,15 @@ class UsersField:
         if status is None:
             return row["users"]
         if status == "healthy":
-            return row["users"] - row["users_errored"]
+            healthy_users = row["users"] - row["users_errored"]
+            return max(healthy_users, 0)
         if status == "abnormal":
             return row["users_abnormal"]
         if status == "crashed":
             return row["users_crashed"]
         if status == "errored":
-            return row["users_errored"]
+            errored_users = row["users_errored"] - row["users_crashed"] - row["users_abnormal"]
+            return max(errored_users, 0)
         return 0
 
 
@@ -326,7 +332,9 @@ def get_constrained_date_range(
     # NOTE: we can remove the difference between `interval` / `rounding_interval`
     # as soon as snuba can provide us with grouped totals in the same query
     # as the timeseries (using `WITH ROLLUP` in clickhouse)
+
     rounding_interval = int(math.ceil(interval / ONE_HOUR) * ONE_HOUR)
+
     date_range = timedelta(
         seconds=int(rounding_interval * math.ceil(date_range.total_seconds() / rounding_interval))
     )
@@ -482,8 +490,9 @@ def massage_sessions_result(
         group = {
             "by": by,
             "totals": make_totals(total_groups.get(key, [None]), by),
-            "series": make_timeseries(timeseries_groups.get(key, []), by),
         }
+        if result_timeseries is not None:
+            group["series"] = make_timeseries(timeseries_groups.get(key, []), by)
 
         groups.append(group)
 
@@ -513,6 +522,8 @@ def _get_timestamps(query):
 
 def _split_rows_groupby(rows, groupby):
     groups = {}
+    if rows is None:
+        return groups
     for row in rows:
         key_parts = (group.get_keys_for_row(row) for group in groupby)
         keys = itertools.product(*key_parts)
