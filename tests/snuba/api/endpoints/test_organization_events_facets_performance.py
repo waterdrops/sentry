@@ -2,19 +2,19 @@ from datetime import timedelta
 
 from django.urls import reverse
 
-from sentry.testutils import APITestCase, SnubaTestCase
-from sentry.testutils.helpers.datetime import before_now, iso_format
+from sentry.testutils.cases import APITestCase, SnubaTestCase
+from sentry.testutils.helpers.datetime import before_now
 from sentry.utils.samples import load_data
 
 
-class OrganizationEventsFacetsPerformanceEndpointTest(SnubaTestCase, APITestCase):
+class BaseOrganizationEventsFacetsPerformanceEndpointTest(SnubaTestCase, APITestCase):
+    url: str
     feature_list = (
         "organizations:discover-basic",
-        "organizations:global-views",
-        "organizations:performance-tag-explorer",
+        "organizations:performance-view",
     )
 
-    def setUp(self):
+    def setUp(self) -> None:
         super().setUp()
         self.min_ago = before_now(minutes=1).replace(microsecond=0)
         self.two_mins_ago = before_now(minutes=2).replace(microsecond=0)
@@ -23,6 +23,22 @@ class OrganizationEventsFacetsPerformanceEndpointTest(SnubaTestCase, APITestCase
         self.login_as(user=self.user)
         self.project = self.create_project()
         self.project2 = self.create_project()
+
+    def do_request(self, query=None, features=None):
+        query = query if query is not None else {"aggregateColumn": "transaction.duration"}
+        query["project"] = query["project"] if "project" in query else [self.project.id]
+
+        feature_dict = {feature: True for feature in self.feature_list}
+        feature_dict.update(features or {})
+        with self.feature(feature_dict):
+            return self.client.get(self.url, query, format="json")
+
+
+class OrganizationEventsFacetsPerformanceEndpointTest(
+    BaseOrganizationEventsFacetsPerformanceEndpointTest
+):
+    def setUp(self) -> None:
+        super().setUp()
 
         self._transaction_count = 0
 
@@ -39,24 +55,22 @@ class OrganizationEventsFacetsPerformanceEndpointTest(SnubaTestCase, APITestCase
 
         self.url = reverse(
             "sentry-api-0-organization-events-facets-performance",
-            kwargs={"organization_slug": self.project.organization.slug},
+            kwargs={"organization_id_or_slug": self.project.organization.slug},
         )
 
     def store_transaction(
-        self, name="exampleTransaction", duration=100, tags=None, project_id=None, lcp=None
+        self, name="exampleTransaction", duration=100, project_id=None, lcp=None, *, tags
     ):
-        if tags is None:
-            tags = []
         if project_id is None:
             project_id = self.project.id
-        event = load_data("transaction").copy()
-        event.data["tags"].extend(tags)
+        event = load_data("transaction")
+        event["tags"].extend(tags)
         event.update(
             {
                 "transaction": name,
                 "event_id": f"{self._transaction_count:02x}".rjust(32, "0"),
-                "start_timestamp": iso_format(self.two_mins_ago - timedelta(seconds=duration)),
-                "timestamp": iso_format(self.two_mins_ago),
+                "start_timestamp": (self.two_mins_ago - timedelta(seconds=duration)).isoformat(),
+                "timestamp": self.two_mins_ago.isoformat(),
             }
         )
 
@@ -68,13 +82,7 @@ class OrganizationEventsFacetsPerformanceEndpointTest(SnubaTestCase, APITestCase
         self._transaction_count += 1
         self.store_event(data=event, project_id=project_id)
 
-    def do_request(self, query=None, feature_list=None):
-        query = query if query is not None else {"aggregateColumn": "transaction.duration"}
-        query["project"] = query["project"] if "project" in query else [self.project.id]
-        with self.feature(feature_list or self.feature_list):
-            return self.client.get(self.url, query, format="json")
-
-    def test_basic_request(self):
+    def test_basic_request(self) -> None:
         response = self.do_request()
         assert response.status_code == 200, response.content
 
@@ -90,7 +98,7 @@ class OrganizationEventsFacetsPerformanceEndpointTest(SnubaTestCase, APITestCase
             "tags_value": "blue",
         }
 
-    def test_sort_frequency(self):
+    def test_sort_frequency(self) -> None:
         # Descending
         response = self.do_request(
             {
@@ -135,7 +143,7 @@ class OrganizationEventsFacetsPerformanceEndpointTest(SnubaTestCase, APITestCase
         assert data[1]["tags_key"] == "many"
         assert data[1]["tags_value"] == "no"
 
-    def test_basic_query(self):
+    def test_basic_query(self) -> None:
         response = self.do_request(
             {
                 "aggregateColumn": "transaction.duration",
@@ -146,13 +154,14 @@ class OrganizationEventsFacetsPerformanceEndpointTest(SnubaTestCase, APITestCase
             }
         )
 
+        assert response.status_code == 200, response.content
         data = response.data["data"]
         assert len(data) == 1
         assert data[0]["count"] == 5
         assert data[0]["tags_key"] == "color"
         assert data[0]["tags_value"] == "blue"
 
-    def test_multiple_projects_not_allowed(self):
+    def test_multiple_projects_not_allowed(self) -> None:
         response = self.do_request(
             {
                 "aggregateColumn": "transaction.duration",
@@ -164,18 +173,18 @@ class OrganizationEventsFacetsPerformanceEndpointTest(SnubaTestCase, APITestCase
             "detail": "You cannot view facet performance for multiple projects."
         }
 
-    def test_missing_tags_column(self):
+    def test_missing_tags_column(self) -> None:
         response = self.do_request({})
         assert response.status_code == 400, response.content
         assert response.data == {"detail": "'aggregateColumn' must be provided."}
 
-    def test_invalid_tags_column(self):
+    def test_invalid_tags_column(self) -> None:
         response = self.do_request({"aggregateColumn": "abc"})
 
         assert response.status_code == 400, response.content
         assert response.data == {"detail": "'abc' is not a supported tags column."}
 
-    def test_all_tag_keys(self):
+    def test_all_tag_keys(self) -> None:
         request = {
             "aggregateColumn": "transaction.duration",
             "sort": "-frequency",
@@ -184,25 +193,17 @@ class OrganizationEventsFacetsPerformanceEndpointTest(SnubaTestCase, APITestCase
             "query": "(color:red or color:blue)",
             "allTagKeys": True,
         }
-        # No feature access
-        response = self.do_request(request)
-        data = response.data["data"]
-        assert len(data) == 1
-        assert data[0]["count"] == 5
-        assert data[0]["tags_key"] == "color"
-        assert data[0]["tags_value"] == "blue"
 
         # With feature access
-        response = self.do_request(
-            request, feature_list=self.feature_list + ("organizations:performance-tag-page",)
-        )
+        response = self.do_request(request)
+        assert response.status_code == 200, response.content
         data = response.data["data"]
         assert len(data) == 5
         assert data[0]["count"] == 19
         assert data[0]["tags_key"] == "application"
         assert data[0]["tags_value"] == "countries"
 
-    def test_tag_frequency(self):
+    def test_tag_frequency(self) -> None:
         # LCP-less transaction should be ignored in total counts for frequency.
         self.store_transaction(tags=[["color", "orange"], ["many", "maybe"]], lcp=None)
 
@@ -215,9 +216,8 @@ class OrganizationEventsFacetsPerformanceEndpointTest(SnubaTestCase, APITestCase
             "allTagKeys": True,
         }
 
-        response = self.do_request(
-            request, feature_list=self.feature_list + ("organizations:performance-tag-page",)
-        )
+        response = self.do_request(request)
+        assert response.status_code == 200, response.content
 
         data = response.data["data"]
         assert len(data) == 5
@@ -228,7 +228,7 @@ class OrganizationEventsFacetsPerformanceEndpointTest(SnubaTestCase, APITestCase
         # Only transactions with lcp should be considered
         assert data[0]["frequency"] == 1
 
-    def test_tag_key_values(self):
+    def test_tag_key_values(self) -> None:
         request = {
             "aggregateColumn": "transaction.duration",
             "sort": "-frequency",
@@ -236,25 +236,16 @@ class OrganizationEventsFacetsPerformanceEndpointTest(SnubaTestCase, APITestCase
             "statsPeriod": "14d",
             "tagKey": "color",
         }
-        # No feature access
-        response = self.do_request(request)
-        data = response.data["data"]
-        assert len(data) == 2
-        assert data[0]["count"] == 5
-        assert data[0]["tags_key"] == "color"
-        assert data[0]["tags_value"] == "blue"
-
         # With feature access
-        response = self.do_request(
-            request, feature_list=self.feature_list + ("organizations:performance-tag-page",)
-        )
+        response = self.do_request(request)
+        assert response.status_code == 200, response.content
         data = response.data["data"]
         assert len(data) == 3
         assert data[0]["count"] == 14
         assert data[0]["tags_key"] == "color"
         assert data[0]["tags_value"] == "red"
 
-    def test_aggregate_zero(self):
+    def test_aggregate_zero(self) -> None:
         # LCP-less transaction should be ignored in total counts for frequency.
         self.store_transaction(tags=[["color", "purple"]], duration=0)
 
@@ -267,12 +258,47 @@ class OrganizationEventsFacetsPerformanceEndpointTest(SnubaTestCase, APITestCase
             "query": "(color:purple)",
         }
 
-        response = self.do_request(
-            request, feature_list=self.feature_list + ("organizations:performance-tag-page",)
-        )
+        response = self.do_request(request)
+        assert response.status_code == 200, response.content
         data = response.data["data"]
         assert len(data) == 1
         assert data[0]["count"] == 1
         assert data[0]["comparison"] == 0
         assert data[0]["tags_key"] == "color"
         assert data[0]["tags_value"] == "purple"
+
+    def test_cursor(self) -> None:
+        self.store_transaction(tags=[["third_tag", "good"]], duration=1000)
+        self.store_transaction(tags=[["third_tag", "bad"]], duration=10000)
+
+        request = {
+            "aggregateColumn": "transaction.duration",
+            "sort": "-frequency",
+            "per_page": 2,
+            "cursor": "0:0:0",
+        }
+
+        response = self.do_request(request)
+        assert response.status_code == 200, response.content
+        data = response.data["data"]
+        assert len(data) == 2
+        assert data[0]["tags_key"] == "color"
+        assert data[0]["count"] == 5
+        assert data[1]["tags_key"] == "many"
+        assert data[1]["count"] == 1
+
+        request["cursor"] = "0:2:0"
+        response = self.do_request(request)
+        assert response.status_code == 200, response.content
+        data = response.data["data"]
+        # Only 1 key in this page
+        assert len(data) == 1
+        assert data[0]["tags_key"] == "third_tag"
+        assert data[0]["count"] == 1
+
+        request["cursor"] = "0:4:0"
+        response = self.do_request(request)
+        assert response.status_code == 200, response.content
+        data = response.data["data"]
+        # 0 keys, past all 3 tag keys stored.
+        assert len(data) == 0

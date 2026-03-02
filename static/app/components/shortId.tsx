@@ -1,40 +1,53 @@
-import * as React from 'react';
-import isPropValid from '@emotion/is-prop-valid';
 import styled from '@emotion/styled';
 
-import AutoSelectText from 'app/components/autoSelectText';
+import type {LinkProps} from '@sentry/scraps/link';
+import {Link} from '@sentry/scraps/link';
 
-type Props = {
+import AutoSelectText from 'sentry/components/autoSelectText';
+
+interface Props {
   shortId: string;
   avatar?: React.ReactNode;
+  className?: string;
   onClick?: (e: React.MouseEvent<HTMLDivElement>) => void;
-};
+  /**
+   * A router target destination
+   */
+  to?: LinkProps['to'];
+}
 
-const ShortId = ({shortId, avatar, ...props}: Props) => {
+function ShortId({shortId, avatar, onClick, to, className}: Props) {
   if (!shortId) {
     return null;
   }
 
   return (
-    <StyledShortId {...props}>
+    <StyledShortId onClick={onClick} className={className}>
       {avatar}
-      <StyledAutoSelectText avatar={!!avatar}>{shortId}</StyledAutoSelectText>
+      {to ? (
+        <Link to={to}>{shortId}</Link>
+      ) : (
+        <StyledAutoSelectText>{shortId}</StyledAutoSelectText>
+      )}
     </StyledShortId>
   );
-};
+}
 
 const StyledShortId = styled('div')`
-  font-family: ${p => p.theme.text.familyMono};
-  display: flex;
+  font-family: ${p => p.theme.font.family.mono};
+  display: grid;
+  grid-auto-flow: column;
+  gap: 0.5em;
   align-items: center;
   justify-content: flex-end;
 `;
 
-const StyledAutoSelectText = styled(AutoSelectText, {shouldForwardProp: isPropValid})<{
-  avatar: boolean;
-}>`
-  margin-left: ${p => p.avatar && '0.5em'};
+export const StyledAutoSelectText = styled(AutoSelectText)`
   min-width: 0;
+
+  a & {
+    color: ${p => p.theme.tokens.interactive.link.accent.rest};
+  }
 `;
 
 export default ShortId;

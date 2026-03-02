@@ -1,34 +1,36 @@
-import * as React from 'react';
+import {Fragment} from 'react';
 import omit from 'lodash/omit';
 
-import {Client} from 'app/api';
-import GenericDiscoverQuery, {
+import type {
   DiscoverQueryProps,
   GenericChildrenProps,
-} from 'app/utils/discover/genericDiscoverQuery';
-import {DataFilter, HistogramData} from 'app/utils/performance/histogram/types';
-import withApi from 'app/utils/withApi';
+} from 'sentry/utils/discover/genericDiscoverQuery';
+import {GenericDiscoverQuery} from 'sentry/utils/discover/genericDiscoverQuery';
+import type {DataFilter, HistogramData} from 'sentry/utils/performance/histogram/types';
 
 type Histograms = Record<string, HistogramData>;
 
 type HistogramProps = {
   fields: string[];
   numBuckets: number;
-  min?: number;
-  max?: number;
-  precision?: number;
   dataFilter?: DataFilter;
   didReceiveMultiAxis?: (axisCounts: Record<string, number>) => void;
+  max?: number;
+  min?: number;
+  precision?: number;
 };
 
 type RequestProps = DiscoverQueryProps & HistogramProps;
 
-type ChildrenProps = Omit<GenericChildrenProps<HistogramProps>, 'tableData'> & {
+export type HistogramQueryChildrenProps = Omit<
+  GenericChildrenProps<HistogramProps>,
+  'tableData'
+> & {
   histograms: Histograms | null;
 };
 
 type Props = RequestProps & {
-  children: (props: ChildrenProps) => React.ReactNode;
+  children: (props: HistogramQueryChildrenProps) => React.ReactNode;
 };
 
 function getHistogramRequestPayload(props: RequestProps) {
@@ -51,10 +53,6 @@ function getHistogramRequestPayload(props: RequestProps) {
   return apiPayload;
 }
 
-function beforeFetch(api: Client) {
-  api.clear();
-}
-
 function HistogramQuery(props: Props) {
   const {children, fields, didReceiveMultiAxis} = props;
 
@@ -73,14 +71,14 @@ function HistogramQuery(props: Props) {
 
   if (fields.length === 0) {
     return (
-      <React.Fragment>
+      <Fragment>
         {children({
           isLoading: false,
           error: null,
           pageLinks: null,
           histograms: {},
         })}
-      </React.Fragment>
+      </Fragment>
     );
   }
 
@@ -88,7 +86,6 @@ function HistogramQuery(props: Props) {
     <GenericDiscoverQuery<Histograms, HistogramProps>
       route="events-histogram"
       getRequestPayload={getHistogramRequestPayload}
-      beforeFetch={beforeFetch}
       didFetch={didFetch}
       {...omit(props, 'children')}
     >
@@ -99,4 +96,4 @@ function HistogramQuery(props: Props) {
   );
 }
 
-export default withApi(HistogramQuery);
+export default HistogramQuery;

@@ -1,88 +1,48 @@
-import * as React from 'react';
-import keydown from 'react-keydown';
+import {useRef} from 'react';
 import styled from '@emotion/styled';
 
-import Search from 'app/components/search';
-import {IconSearch} from 'app/icons';
-import {t} from 'app/locale';
+import {InputGroup} from '@sentry/scraps/input';
+
+import {Search} from 'sentry/components/search';
+import {IconSearch} from 'sentry/icons';
+import {t} from 'sentry/locale';
+import {useHotkeys} from 'sentry/utils/useHotkeys';
 
 const MIN_SEARCH_LENGTH = 1;
 const MAX_RESULTS = 10;
 
-type Props = {};
+function SettingsSearch() {
+  const searchInput = useRef<HTMLInputElement>(null);
 
-class SettingsSearch extends React.Component<Props> {
-  searchInput = React.createRef<HTMLInputElement>();
+  useHotkeys([{match: '/', callback: () => searchInput.current?.focus()}]);
 
-  @keydown('/')
-  handleFocusSearch(e: React.FormEvent<HTMLInputElement>) {
-    if (!this.searchInput.current) {
-      return;
-    }
-    if (e.target === this.searchInput.current) {
-      return;
-    }
-
-    e.preventDefault();
-    this.searchInput.current.focus();
-  }
-
-  render() {
-    return (
-      <Search
-        entryPoint="settings_search"
-        minSearch={MIN_SEARCH_LENGTH}
-        maxResults={MAX_RESULTS}
-        renderInput={({getInputProps}) => (
-          <SearchInputWrapper>
-            <SearchInputIcon size="14px" />
-            <SearchInput
-              {...getInputProps({
-                type: 'text',
-                placeholder: t('Search'),
-              })}
-              ref={this.searchInput}
-            />
-          </SearchInputWrapper>
-        )}
-      />
-    );
-  }
+  return (
+    <Search
+      entryPoint="settings_search"
+      minSearch={MIN_SEARCH_LENGTH}
+      maxResults={MAX_RESULTS}
+      renderInput={({getInputProps}) => (
+        <InputGroup>
+          <InputGroup.LeadingItems>
+            <IconSearch size="sm" />
+          </InputGroup.LeadingItems>
+          <StyledSearchInput
+            size="sm"
+            aria-label={t('Search Settings')}
+            {...getInputProps({type: 'text', placeholder: t('Search')})}
+            ref={searchInput}
+          />
+        </InputGroup>
+      )}
+    />
+  );
 }
 
 export default SettingsSearch;
 
-const SearchInputWrapper = styled('div')`
-  position: relative;
-`;
-
-const SearchInputIcon = styled(IconSearch)`
-  color: ${p => p.theme.gray300};
-  position: absolute;
-  left: 10px;
-  top: 8px;
-`;
-
-const SearchInput = styled('input')`
-  color: ${p => p.theme.formText};
-  background-color: ${p => p.theme.background};
-  transition: border-color 0.15s ease;
-  font-size: 14px;
-  width: 260px;
-  line-height: 1;
-  padding: 5px 8px 4px 28px;
-  border: 1px solid ${p => p.theme.border};
-  border-radius: 30px;
-  height: 28px;
-
-  box-shadow: inset ${p => p.theme.dropShadowLight};
-
-  &:focus {
-    outline: none;
-    border: 1px solid ${p => p.theme.border};
-  }
-
-  &::placeholder {
-    color: ${p => p.theme.formPlaceholder};
+const StyledSearchInput = styled(InputGroup.Input)`
+  width: 100px;
+  @media (min-width: ${p => p.theme.breakpoints.md}) {
+    width: 260px;
   }
 `;
